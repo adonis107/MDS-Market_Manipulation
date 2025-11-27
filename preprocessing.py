@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import polars as pl
+from scipy.stats import linregress
 import torch
 import torch.nn as nn
 from sklearn.preprocessing import PowerTransformer, StandardScaler, MinMaxScaler
@@ -100,12 +102,69 @@ def prepare_features(df, seq_length, train_split=0.7):
     return X_train, X_test, scaler
 
 
-def extract_features(df, window=50):
+def calculate_sweep_cost(prices, volumes, target_size=1000):
+    """
+    Calculate sweep-to-fill cost for a given row of orderbook data.
+    Args:
+        prices: array of prices at each level
+        volumes: array of volumes at each level
+    Returns:
+        sweep_cost: the sweep-to-fill cost
+    """
+    cumulative_volume = np.cumsum(volumes, axis=1)
+
+    cumulative_volume_prev = np.zeros_like(cumulative_volume)
+    cumulative_volume_prev[:, 1:] = cumulative_volume[:, :-1]
+
+    # Volume to take = Target - (Volume already taken in previous levels)
+    volume_needed = np.maximum(0, target_size - cumulative_volume_prev)
+    volume_taken = np.minimum(volumes, volume_needed)
+
+    total_cost = np.sum(volume_taken * prices, axis=1)
+    total_volume = np.sum(volume_taken, axis=1)
+
+    sweep_cost = np.divide(total_cost, total_volume, out=np.full_like(total_cost, np.nan), where=total_volume!=0)
+    return sweep_cost
+
+
+def get_slope(prices, volumes, depth):
+    """
+    Calculate the slope (elasticity) of the orderbook side (ask or bid) for a given row.
+    We want slope beta for: Price = alpha + beta * log(Cumulative Volume).
+    Formula: beta = Cov(X, Y) / Var(X).
+    Args:
+            row: a row of the orderbook DataFrame
+            volumes: volumes at each level
+            depth: number of levels to consider
+    Returns:
+            slope: absolute value of the slope from linear regression
+    """
+    p_slice = prices[:, :depth]
+    v_slice = volumes[:, :depth]
+
+    x = np.log(np.cumsum(v_slice, axis=1) + 1)
+    y = p_slice
+
+    x_mean = np.mean(x, axis=1, keepdims=True)
+    y_mean = np.mean(y, axis=1, keepdims=True)
+
+    dx = x - x_mean
+    dy = y - y_mean
+
+    # Covariance and variance
+    numerator = np.sum(dx * dy, axis=1)
+    denominator = np.sum(dx ** 2, axis=1)
+
+    slope = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator!=0)
+    return np.abs(slope)
+
+
+def extract_features(df, window=50, n_levels = 10, slope_depth = 5, target_size = 1000):
     """
     Extract engineered features from a level-1..5 orderbook dataframe `df`.
     Returns a DataFrame of features (NaNs kept where appropriate).
     """
-    data = pd.DataFrame(index=df.index)
+    data = pd.DataFrame(df)
     # Mid-price and spread
     data["mid_price"] = (df['ask-price-1'] + df['bid-price-1']) / 2
     data["spread"] = df['ask-price-1'] - df['bid-price-1']
@@ -115,6 +174,9 @@ def extract_features(df, window=50):
     total_bid_volume_5 = df[[f'bid-volume-{i}' for i in range(1, 6)]].sum(axis=1)
     total_ask_volume_5 = df[[f'ask-volume-{i}' for i in range(1, 6)]].sum(axis=1)
     data["L5_Imbalance"] = (total_bid_volume_5 - total_ask_volume_5) / (total_bid_volume_5 + total_ask_volume_5)
+
+    # Fair value deviation from mid-price
+    data["micro_price_deviation"] = data["L1_Imbalance"] * (data["spread"] / 2)
 
     # Volume concentration (safe divide)
     data['bid_depth_ratio'] = df[[f'bid-volume-{i}' for i in range(2, 6)]].sum(axis=1) / df['bid-volume-1'].replace(0, np.nan)
@@ -131,8 +193,8 @@ def extract_features(df, window=50):
     data["net_ask_flow"] = df['ask-volume-1'].diff() * (df['ask-price-1'] == df['ask-price-1'].shift(1)).astype(int)
 
     # Rolling volatility
-    data["volatility_50"] = data["log_return"].rolling(window=50).std()
-    data["volatility_100"] = data["log_return"].rolling(window=100).std()
+    data["volatility_50"] = data["log_return"].rolling(window=window).std()
+    data["volatility_100"] = data["log_return"].rolling(window=2*window).std()
 
     # High-low range
     rolling_max = data["mid_price"].rolling(window=window).max()
@@ -146,6 +208,22 @@ def extract_features(df, window=50):
     dt = df['xltime'].diff().fillna(0.001)
     dt = dt.replace(0, 0.001)
     data["dt"] = dt
+
+    # Prepare arrays for vectorized sweep cost and slope calculations
+    P_bid = np.stack([df[f'bid-price-{i}'].values for i in range(1, n_levels + 1)], axis=1)
+    V_bid = np.stack([df[f'bid-volume-{i}'].values for i in range(1, n_levels + 1)], axis=1)
+    P_ask = np.stack([df[f'ask-price-{i}'].values for i in range(1, n_levels + 1)], axis=1)
+    V_ask = np.stack([df[f'ask-volume-{i}'].values for i in range(1, n_levels + 1)], axis=1)
+
+    # Sweep-to-fill cost (effective spread)
+    bid_sweep_cost = calculate_sweep_cost(P_bid, V_bid, target_size=target_size)
+    ask_sweep_cost = calculate_sweep_cost(P_ask, V_ask, target_size=target_size)
+    data["ask_sweep_cost"] = ask_sweep_cost - data["mid_price"]
+    data["bid_sweep_cost"] = data["mid_price"] - bid_sweep_cost
+
+    # Slope (elasticity) of orderbook sides
+    data["ask_slope"] = get_slope(P_bid, V_bid, depth=slope_depth)
+    data["bid_slope"] = get_slope(P_ask, V_ask, depth=slope_depth)
 
     return data
 
@@ -232,7 +310,7 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
                                      levels=10, price_scale=10000,
                                      halflife_short=5, halflife_long=50, deep_halflife=10):
     """
-    Compute Hawkes-style memory features (limit + market flows), deep insertions and
+    Add Fabre & Challet features. Compute Hawkes-style memory features (limit + market flows), deep insertions and
     weighted multilevel limit order flows with spatial/time decay. Appends columns to
     `data` (creates new DataFrame if None) and returns it.
     """
