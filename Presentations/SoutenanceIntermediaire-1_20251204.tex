@@ -33,7 +33,7 @@
 \setbeamercolor{structure}{fg=CSgrey}
 
 \title[Détection de Manipulation]{Détection Probabiliste de Manipulation de Marchés}
-\subtitle{Soutenance Intermédiaire - Projet Recherche}
+\subtitle{Soutenance Intermédiaire - Projet de Recherche}
 \author[Jamal, Martini]{Adonis~Jamal \and Jean Martini\\Encadrant : Damien Challet}
 \institute[CentraleSupélec]{CentraleSupélec -- Laboratoire MICS}
 \date[4 décembre 2025]{4 décembre 2025}
@@ -54,9 +54,9 @@
 \end{frame}
 
 % ==============================================================================
-% SECTION 1: LE PROJET
+% SECTION 1: INTRODUCTION
 % ==============================================================================
-\section{Le projet}
+\section{Introduction}
 \subsection{Contexte}
 
 \begin{frame}{Le carnet d'ordres (LOB)}
@@ -94,23 +94,6 @@
     \end{itemize}
 \end{frame}
 
-\subsection{Objectifs}
-\begin{frame}{Objectifs du projet}
-    Le projet vise à développer un outil de détection temps réel basé sur la \textbf{"Spoofability"} des marchés.
-    
-    \vspace{0.5cm}
-    \textbf{Objectifs principaux :}
-    \begin{enumerate}
-        \item \textbf{Implémentation d'un modèle probabiliste :} Réseau de neurones estimant la distribution conditionnelle des rendements futurs \cite{fabre_2025}.
-        \item \textbf{Comparaison inter-marchés :} 
-        \begin{itemize}
-            \item Marchés Actions (Régulés, surveillés).
-            \item Marchés Crypto (Non régulés, suspicion de forte manipulation).
-        \end{itemize}
-        \item \textbf{Validation de l'hypothèse :} Les marchés actions sont-ils structurellement moins sensibles (spoofables) que les marchés crypto ?
-    \end{enumerate}
-\end{frame}
-
 \subsection{Hypothèses}
 \begin{frame}{Hypothèses de travail}
     \begin{block}{Hypothèses Microstructurelles}
@@ -127,6 +110,41 @@
             \item Une sensibilité (impact prix) plus forte aux ordres de spoofing que les marchés actions traditionnels.
         \end{itemize}
     \end{block}
+\end{frame}
+
+\subsection{Objectifs}
+\begin{frame}{Objectifs du projet}
+    Le projet vise à développer une meilleure caractérisation de la \textbf{"Spoofability"} des marchés.
+    
+    \vspace{0.5cm}
+    \textbf{Objectifs principaux :}
+    \begin{enumerate}
+        \item \textbf{Implémentation de modèles et features :} Réseau de neurones \cite{fabre_2025,poutre_2024,tao_2020}, exploration.
+        \item \textbf{Comparaison inter-marchés :} 
+        \begin{itemize}
+            \item Marchés Actions (Régulés, surveillés).
+            \item Marchés Crypto (Non régulés, suspicion de forte manipulation).
+        \end{itemize}
+        \item \textbf{Validation de l'hypothèse :} Les marchés actions sont-ils structurellement moins sensibles (spoofables) que les marchés crypto ? Arrivons-nous à détecter ces manipulations ? 
+    \end{enumerate}
+\end{frame}
+
+\subsection{Avancement et Plan}
+\begin{frame}{Avancement actuel et Plan de travail}
+    \textbf{Réalisé (Mois 1) :}
+    \begin{itemize}
+        \item Étude bibliographique approfondie (Fabre, Tao, Poutré).
+        \item Prise en main des données (Level 3 Crypto fournies par l'encadrant).
+        \item Architecture du code Python structurée (pré-traitement, feature engineering, modèles).
+    \end{itemize}
+
+    \textbf{Planification (Mois 2-5) :}
+    \begin{itemize}
+        \item \textbf{Décembre - Janvier :} Implémentation complète et calibration des modèles sur les données. Exploration des features.
+        \item \textbf{Février :} Analyse de sensibilité (Impact de la distance $\delta$ et du volume $Q$ sur la distribution $\Delta p$). Quantification de la spoofability comparée.
+        \item \textbf{Mars :} 
+        \item \textbf{Avril :} Rédaction du rapport final et préparation soutenance.
+    \end{itemize}
 \end{frame}
 
 % ==============================================================================
@@ -210,40 +228,30 @@
 \end{frame}
 
 % ==============================================================================
-% SECTION 4: AVANCEMENT
+% SECTION 4: CONCLUSION
 % ==============================================================================
-\section{Avancement et Plan}
-\begin{frame}{Avancement actuel et Plan de travail}
-    \textbf{Réalisé (Mois 1) :}
-    \begin{itemize}
-        \item Étude bibliographique approfondie (Fabre, Tao, Poutré).
-        \item Prise en main des données (Level 3 Crypto fournies par Sun Zu Lab / Encadrant).
-        \item Architecture du code Python structurée (pré-traitement, modèle PNN).
-    \end{itemize}
-
-    \textbf{Planification (Mois 2-5) :}
-    \begin{itemize}
-        \item \textbf{Décembre - Janvier :} Implémentation complète et calibration du modèle PNN sur les données Crypto (BTC/ETH).
-        \item \textbf{Février :} Récupération et calibration sur données Actions (LOBster ou équivalent) pour comparaison.
-        \item \textbf{Mars :} Analyse de sensibilité (Impact de la distance $\delta$ et du volume $Q$ sur la distribution $\Delta p$). Quantification de la spoofability comparée.
-        \item \textbf{Avril :} Rédaction du rapport final et préparation soutenance.
-    \end{itemize}
-\end{frame}
-
 \section{}
 \begin{frame}{}
     \centering
     \LARGE{Merci pour votre attention}
 \end{frame}
 
+
+% ==============================================================================
+% SECTION : BIBLIOGRAPHIE
+% ==============================================================================
 \begin{frame}[allowframebreaks]{Bibliographie}
     \frametitle{Bibliographie}
     \nocite{*}
     \printbibliography
 \end{frame}
 
-\section*{Annexe}
-\subsection*{Organisation du travail d'équipe}
+% ==============================================================================
+% SECTION : ANNEXE
+% ==============================================================================
+\appendix
+\section{Annexe}
+\subsection{Organisation du Travail}
 \begin{frame}{Organisation du travail d'équipe}
     \begin{block}{Organisation et dispositif}
         \begin{itemize}
