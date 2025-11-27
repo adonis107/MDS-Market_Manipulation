@@ -1,0 +1,263 @@
+\documentclass{beamer}
+\usetheme{Madrid}
+\usecolortheme{default}
+\useoutertheme{split}
+\useinnertheme{circles}
+\usepackage{xcolor}
+\usepackage{mathrsfs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{animate}
+\usepackage{caption}
+\captionsetup[figure]{font=tiny}
+
+\usepackage[
+    backend=biber,
+    style=alphabetic,
+    sorting=ynt
+]{biblatex}
+\addbibresource{bibliography.bib}
+
+% --- Couleurs CS ---
+\definecolor{CSred}{RGB}{160,32,60}
+\definecolor{CSgrey}{RGB}{136,121,150}
+\definecolor{UPSred}{RGB}{97,21,58}
+\setbeamercolor{titlelike}{bg=CSred}
+\setbeamerfont{title}{series=\bfseries}
+\setbeamercolor{palette primary}{bg=CSred,fg=white}
+\setbeamercolor{palette secondary}{bg=CSred,fg=white}
+\setbeamercolor{palette tertiary}{bg=CSgrey,fg=white}
+\setbeamercolor{palette quaternary}{bg=CSgrey,fg=white}
+\setbeamercolor{structure}{fg=CSgrey}
+
+\title[Détection de Manipulation]{Détection Probabiliste de Manipulation de Marchés}
+\subtitle{Soutenance Intermédiaire - Projet Recherche}
+\author[Jamal, Martini]{Adonis~Jamal \and Jean Martini\\Encadrant : Damien Challet}
+\institute[CentraleSupélec]{CentraleSupélec -- Laboratoire MICS}
+\date[4 décembre 2025]{4 décembre 2025}
+
+\titlegraphic{
+    \includegraphics[height=0.8cm]{img/logo_cs}
+    \hspace{2cm}
+    \includegraphics[height=0.8cm]{img/logoMICS.png}
+}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\begin{frame}
+    \frametitle{Sommaire}
+    \tableofcontents
+\end{frame}
+
+% ==============================================================================
+% SECTION 1: LE PROJET
+% ==============================================================================
+\section{Le projet}
+\subsection{Contexte}
+
+\begin{frame}{Le carnet d'ordres (LOB)}
+    \frametitle{Les marchés et le Carnet d'Ordres}
+    \begin{itemize}
+        \item \textbf{Limit Order Book (LOB) :} Répertoire central des intentions d'achat (Bid) et de vente (Ask).
+        \item \textbf{Dynamique :} Le prix médian (\textit{mid-price}) réagit à l'état instantané et au flux d'ordres passé (Order Flow).
+        \item \textbf{Données :} 
+        \begin{itemize}
+            \item Données Haute Fréquence (Level 3 / Market-by-order).
+            \item Nécessité de traiter des millions d'événements par jour.
+        \end{itemize}
+    \end{itemize}
+    \begin{block}{Problématique}
+        La microstructure du marché peut être exploitée pour induire les autres participants en erreur.
+    \end{block}
+\end{frame}
+
+\begin{frame}{Le spoofing}
+    \frametitle{Le spoofing : une manipulation structurelle}
+    \begin{itemize}
+        \item \textbf{Définition :} Placer des ordres non-bona fide (sans intention d'exécution) pour créer une fausse impression de liquidité ou de pression directionnelle.
+        \item \textbf{Tactiques courantes :}
+        \begin{itemize}
+            \item \textit{Layering :} Empilement d'ordres à différents niveaux de prix.
+            \item \textit{Vacuuming :} Création de vides de liquidité pour provoquer des mouvements brusques.
+        \end{itemize}
+        \item \textbf{Mécanisme :} 
+        \begin{enumerate}
+            \item Placer un gros ordre d'achat (Fake) loin du prix.
+            \item Attendre que le prix monte (réaction des algos).
+            \item Vendre réellement (Bona fide) à un prix plus élevé.
+            \item Annuler l'ordre d'achat initial.
+        \end{enumerate}
+    \end{itemize}
+\end{frame}
+
+\subsection{Objectifs}
+\begin{frame}{Objectifs du projet}
+    Le projet vise à développer un outil de détection temps réel basé sur la \textbf{"Spoofability"} des marchés.
+    
+    \vspace{0.5cm}
+    \textbf{Objectifs principaux :}
+    \begin{enumerate}
+        \item \textbf{Implémentation d'un modèle probabiliste :} Réseau de neurones estimant la distribution conditionnelle des rendements futurs \cite{fabre_2025}.
+        \item \textbf{Comparaison inter-marchés :} 
+        \begin{itemize}
+            \item Marchés Actions (Régulés, surveillés).
+            \item Marchés Crypto (Non régulés, suspicion de forte manipulation).
+        \end{itemize}
+        \item \textbf{Validation de l'hypothèse :} Les marchés actions sont-ils structurellement moins sensibles (spoofables) que les marchés crypto ?
+    \end{enumerate}
+\end{frame}
+
+\subsection{Hypothèses}
+\begin{frame}{Hypothèses de travail}
+    \begin{block}{Hypothèses Microstructurelles}
+        \begin{itemize}
+            \item La distance de placement des ordres limites joue un rôle critique dans la formation des prix (contrairement aux modèles basés uniquement sur le volume au best bid/ask) \cite{tao_2020}.
+            \item Un agent manipulateur agit rationnellement pour minimiser son coût d'exécution espéré.
+        \end{itemize}
+    \end{block}
+
+    \begin{block}{Hypothèse Comparative}
+        En l'absence de régulation stricte, les carnets d'ordres de crypto-monnaies (CEX) présentent :
+        \begin{itemize}
+            \item Une fréquence de spoofing plus élevée.
+            \item Une sensibilité (impact prix) plus forte aux ordres de spoofing que les marchés actions traditionnels.
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+% ==============================================================================
+% SECTION 2: ÉTAT DE L'ART (BIBLIO)
+% ==============================================================================
+\section{État de l'art}
+\begin{frame}{Synthèse Bibliographique}
+    Notre approche s'appuie sur trois axes de recherche récents :
+    
+    \begin{itemize}
+        \item \textbf{Approche Probabiliste \& Features Hawkes} \cite{fabre_2025} :
+        Utilisation de réseaux de neurones pour prédire non pas un prix, mais les paramètres d'une distribution de prix ($\mu, \sigma, \alpha$), en utilisant des variables de flux d'ordres multi-échelles (temps, volume, distance).
+        
+        \item \textbf{Détection Non-Supervisée (Deep Learning)} \cite{poutre_2024} :
+        Utilisation d'Auto-encodeurs (Transformers) pour apprendre la "normalité" du marché et détecter les anomalies via la distance de reconstruction ou SVM One-Class.
+        
+        \item \textbf{Modélisation de l'Imbalance} \cite{tao_2020} :
+        Étude théorique de l'impact de l'imbalance multi-niveaux sur le mouvement des prix et stratégies optimales de spoofing.
+    \end{itemize}
+\end{frame}
+
+% ==============================================================================
+% SECTION 3: MÉTHODOLOGIE
+% ==============================================================================
+\section{Méthodologie}
+
+\subsection{Machine Learning}
+
+\begin{frame}{Feature Engineering : Processus de Hawkes}
+    \frametitle{Construction des variables explicatives}
+    Pour capturer la dynamique temporelle et spatiale du carnet, nous utilisons des variables inspirées des processus de Hawkes marqués.
+    
+    Soit $N_t$ le processus de comptage des ordres. On définit les variables de flux $L_t$ (Limit) et $M_t$ (Market) :
+    
+    \begin{equation}
+        L_t(\phi) = \int_{(-\infty, t]} \phi(t-s, v_s, \delta_s) dN_s
+    \end{equation}
+    
+    \begin{itemize}
+        \item \textbf{Noyau $\phi$ :} Intègre trois dimensions cruciales :
+        \begin{itemize}
+            \item \textit{Temps :} Décroissance exponentielle $e^{-\beta t}$ (mémoire du marché).
+            \item \textit{Volume ($v_s$) :} Impact de la taille de l'ordre.
+            \item \textbf{\textit{Distance ($\delta_s$) :}} Distance au mid-price (innovation majeure par rapport à l'imbalance classique).
+        \end{itemize}
+        \item \textbf{Multi-échelles :} Combinaison de plusieurs horizons temporels ($\beta$) et échelles de distance ($\eta$).
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Architecture du Modèle (PNN)}
+    \frametitle{Réseau de Neurones Probabiliste}
+    L'objectif n'est pas de classifier (Spoof/Pas Spoof) mais d'apprendre la dynamique des prix $P(\Delta p | \mathcal{F}_t)$.
+    
+    \begin{itemize}
+        \item \textbf{Entrée $x$ :} Vecteur de features (Spread, Flux d'ordres Limites multi-échelles, Flux d'ordres Marché).
+        \item \textbf{Modèle :} Feed-forward Neural Network (MLP) léger pour le temps réel.
+        \item \textbf{Sortie $\Theta(x)$ :} Paramètres d'une distribution (ex: Gaussienne Asymétrique).
+        $$ \Delta p \sim \mathcal{SN}(\mu(x), \sigma(x), \alpha(x)) $$
+        \item \textbf{Entraînement :} Maximisation de la vraisemblance (Maximum Likelihood Estimation) sur données historiques saines.
+    \end{itemize}
+\end{frame}
+
+\subsection{Finance Quantitative}
+\begin{frame}{Détection par la "Spoofability"}
+    \frametitle{Critère de Détection Financier}
+    Nous adoptons le point de vue du manipulateur rationnel.
+    
+    \begin{block}{Fonction de Coût Espéré $\mathbb{E}[C]$}
+        Le spoofer compare deux scénarios pour exécuter un ordre cible $q$ :
+        \begin{enumerate}
+            \item \textbf{Exécution normale :} Coût d'exécution sans intervention.
+            \item \textbf{Avec Spoofing :} Coût d'exécution après insertion d'un faux ordre $Q$ à distance $\delta$.
+        \end{enumerate}
+    \end{block}
+    
+    \begin{alertblock}{Règle de Détection}
+        Un ordre $(Q, \delta)$ est suspect si son insertion améliore significativement le coût d'exécution espéré sur le côté opposé :
+        $$ \Delta \mathcal{C}(Q, \delta) = \mathbb{E}[C_{\text{normal}}] - \mathbb{E}[C_{\text{spoof}}] > 0 $$
+    \end{alertblock}
+    Le modèle PNN sert à calculer ces espérances en prédisant le mouvement de prix $\Delta p$ induit.
+\end{frame}
+
+% ==============================================================================
+% SECTION 4: AVANCEMENT
+% ==============================================================================
+\section{Avancement et Plan}
+\begin{frame}{Avancement actuel et Plan de travail}
+    \textbf{Réalisé (Mois 1) :}
+    \begin{itemize}
+        \item Étude bibliographique approfondie (Fabre, Tao, Poutré).
+        \item Prise en main des données (Level 3 Crypto fournies par Sun Zu Lab / Encadrant).
+        \item Architecture du code Python structurée (pré-traitement, modèle PNN).
+    \end{itemize}
+
+    \textbf{Planification (Mois 2-5) :}
+    \begin{itemize}
+        \item \textbf{Décembre - Janvier :} Implémentation complète et calibration du modèle PNN sur les données Crypto (BTC/ETH).
+        \item \textbf{Février :} Récupération et calibration sur données Actions (LOBster ou équivalent) pour comparaison.
+        \item \textbf{Mars :} Analyse de sensibilité (Impact de la distance $\delta$ et du volume $Q$ sur la distribution $\Delta p$). Quantification de la spoofability comparée.
+        \item \textbf{Avril :} Rédaction du rapport final et préparation soutenance.
+    \end{itemize}
+\end{frame}
+
+\section{}
+\begin{frame}{}
+    \centering
+    \LARGE{Merci pour votre attention}
+\end{frame}
+
+\begin{frame}[allowframebreaks]{Bibliographie}
+    \frametitle{Bibliographie}
+    \nocite{*}
+    \printbibliography
+\end{frame}
+
+\section*{Annexe}
+\subsection*{Organisation du travail d'équipe}
+\begin{frame}{Organisation du travail d'équipe}
+    \begin{block}{Organisation et dispositif}
+        \begin{itemize}
+            \item Réunions hebdomadaires avec l'encadrant (D. Challet).
+            \item Gestion de projet agile : ré-évaluation périodique des objectifs.
+            \item Outils : Teams (Comms), Git (Versionning Code), Overleaf (Rapport).
+        \end{itemize}  
+    \end{block}
+    \begin{block}{Répartition du travail}
+        \begin{itemize}
+            \item \textbf{Adonis :} Code, travail sur les méthodes, orienté finance quantitative. 
+            \item \textbf{Jean :} Code, travail sur les méthodes, orienté machine learning.
+        \end{itemize}
+    \end{block}
+\end{frame}
+
+\end{document}

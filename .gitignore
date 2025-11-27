@@ -1,2 +1,17 @@
 *.csv.gz
 __pycache__/
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.nav
+*.snm
+*.fls
+*.fdb_latexmk
+*.run.xml
+
+
