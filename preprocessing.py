@@ -81,6 +81,7 @@ class data_preprocessor():
 
         return X_original
 
+
 def create_sequences(data, seq_length):
     """
     Converts a 2D array (Time, Features) into 3D sequences (Samples, Time, Features).
@@ -476,3 +477,54 @@ def compute_hawkes_and_weighted_flow(df, data=None, etas=None, betas=None,
         data[f"Hawkes_M_ask_beta{beta}"] = pd.Series(raw_M_ask, index=df.index).ewm(halflife=beta).mean()
 
     return data
+
+
+def load_lobster_data(orderbook_path, message_path, levels=10, nrows=None):
+    """
+    Loads LOBSTER data and formats it for AnomalyDetectionPipeline.
+    
+    Args:
+        orderbook_path: Path to the '_orderbook_10.csv' file.
+        message_path: Path to the '_message_10.csv' file.
+        levels: Number of levels in the LOBSTER file (usually 10).
+        nrows: Number of rows to load (for testing).
+    """
+    print(f"Loading LOBSTER data from {orderbook_path}...")
+    
+    # Load Orderbook (LOBSTER has no headers)
+    # Columns are interleaved: Ask P 1, Ask V 1, Bid P 1, Bid V 1, Ask P 2...
+    lob_df = pd.read_csv(orderbook_path, header=None, nrows=nrows)
+    
+    # Rename columns to match pipeline/preprocessing.py expectations
+    # Expected format: ask-price-1, ask-volume-1, bid-price-1, bid-volume-1
+    new_columns = []
+    for i in range(1, levels + 1):
+        # LOBSTER structure from ReadMe: Ask Price, Ask Size, Bid Price, Bid Size
+        new_columns.extend([
+            f"ask-price-{i}", 
+            f"ask-volume-{i}", 
+            f"bid-price-{i}", 
+            f"bid-volume-{i}"
+        ])
+    
+    if len(new_columns) != len(lob_df.columns):
+        raise ValueError(f"Column count mismatch. File has {len(lob_df.columns)}, expected {len(new_columns)} for {levels} levels.")
+        
+    lob_df.columns = new_columns
+
+    # Load Message file to get Time
+    # LOBSTER Message format: Time (sec), Type, OrderID, Size, Price, Direction
+    msg_df = pd.read_csv(message_path, header=None, nrows=nrows)
+    msg_df.columns = ["Time", "Type", "OrderID", "Size", "Price", "Direction"]
+    
+    # Map LOBSTER 'Time' (seconds from midnight) to 'xltime' required by pipeline
+    lob_df['xltime'] = msg_df['Time']
+
+    # Normalize Prices
+    # LOBSTER prices are integers (e.g., 911400 -> $91.14). 
+    # We divide by 10,000 to get standard currency units.
+    price_cols = [c for c in lob_df.columns if 'price' in c]
+    lob_df[price_cols] = lob_df[price_cols] / 10000.0
+    
+    print(f"Successfully loaded {len(lob_df)} LOBSTER rows.")
+    return lob_df

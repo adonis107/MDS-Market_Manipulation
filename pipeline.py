@@ -103,9 +103,17 @@ class AnomalyDetectionPipeline:
 
         # Drop constant columns
         constant_cols = [col for col in self.processed_df.columns if self.processed_df[col].nunique() <= 1]
-        if constant_cols:
-            print(f"Dropping{constant_cols} constant features: {constant_cols}")
-            self.processed_df = self.processed_df.drop(columns=constant_cols)
+
+        # Check for zero variance (numerical constants)
+        std_devs = self.processed_df.std()
+        zero_var_cols = std_devs[std_devs < 1e-9].index.tolist()
+
+        # Combine and drop columns
+        cols_to_drop = list(set(constant_cols + zero_var_cols))
+
+        if cols_to_drop:
+            print(f"Dropping {len(cols_to_drop)} constant/zero-variance features: {cols_to_drop}")
+            self.processed_df = self.processed_df.drop(columns=cols_to_drop)
             self.feature_names = self.processed_df.columns.tolist()
 
         if self.target_col not in self.feature_names:
