@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 
@@ -97,10 +98,11 @@ class AnomalyDetectionPipeline:
         print(f"Feature Engineering complete. Total features: {len(self.feature_names)}")
         return self
 
-    def scale_and_sequence(self, method='minmax', train_split=0.7):
+    def scale_and_sequence(self, method='minmax', train_ratio=0.7, val_ratio=0.15):
         """
         Scales data and creates sequences.
         method: 'minmax' (default), 'standard', 'box-cox'
+        val_ratio: proportion of data to use for validation (default 0.15)
         """
         print(f"Preprocessing with method: {method}...")
 
@@ -143,24 +145,26 @@ class AnomalyDetectionPipeline:
 
         # Create sequences
         all_sequences = prep.create_sequences(data_scaled, self.seq_length)
-
         self.y_targets = data_scaled[self.seq_length:, target_idx]
         
         min_len = min(len(all_sequences), len(self.y_targets))
-        
         self.X_seqs = all_sequences[:min_len]
         self.y_targets = self.y_targets[:min_len]
 
-        # Split
-        train_size = int(len(self.X_seqs) * train_split)
+        # Split into Train/Val/Test
+        n_total = len(self.X_seqs)
+        train_end = int(n_total * train_ratio)
+        val_end = int(n_total * (train_ratio + val_ratio))
 
-        self.X_train = self.X_seqs[:train_size]
-        self.X_test = self.X_seqs[train_size:]
+        self.X_train = self.X_seqs[:train_end]
+        self.X_val = self.X_seqs[train_end:val_end]
+        self.X_test = self.X_seqs[val_end:]
 
-        self.y_train = self.y_targets[:train_size]
-        self.y_test = self.y_targets[train_size:]
+        self.y_train = self.y_targets[:train_end]
+        self.y_val = self.y_targets[train_end:val_end]
+        self.y_test = self.y_targets[val_end:]
         
-        print(f"Data split: Train {self.X_train.shape}, Test {self.X_test.shape}")
+        print(f"Data split: Train {self.X_train.shape}, Val {self.X_val.shape}, Test {self.X_test.shape}")
         return self
 
     def _get_dataloader(self, X, y=None, shuffle=True, return_indices=False):
@@ -179,14 +183,16 @@ class AnomalyDetectionPipeline:
         if y is not None:
             tensor_y = torch.tensor(y, dtype=torch.float32)
             dataset = TensorDataset(tensor_x, tensor_y)
+
         elif return_indices:
             dataset = TensorDataset(tensor_x, indices)
+
         else:
             dataset = TensorDataset(tensor_x, tensor_x) # Autoencoder target is input
 
         return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
 
-    def train_model(self, model_type='transformer_ocsvm', epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None):
+    def train_model(self, model_type='transformer_ocsvm', epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None, patience=5):
         """
         Trains the selected model architecture.
         model_type: 'transformer_ocsvm' (default), 'pnn', 'prae'
@@ -194,6 +200,17 @@ class AnomalyDetectionPipeline:
         self.model_type = model_type
         num_feat = self.X_train.shape[2]
         
+        # Validation set for early stopping
+        if self.X_val is None:
+            raise ValueError("Validation set is not defined. Please run scale_and_sequence with a validation split.")
+        
+        early_stopping = ml.EarlyStopping(patience=patience, verbose=True, path='best_model_checkpoint.pth')
+
+        if model_type == 'pnn':
+            val_loader = self._get_dataloader(self.X_val, self.y_val, shuffle=False)
+        else:
+            val_loader = self._get_dataloader(self.X_val, shuffle=False)
+
         if model_type == 'transformer_ocsvm':
             print("Initializing Transformer Autoencoder...")
             self.model = ml.TransformerAutoencoder(
@@ -211,9 +228,10 @@ class AnomalyDetectionPipeline:
             train_loader = self._get_dataloader(self.X_train)
             
             self.model.train()
-            print("Training Autoencoder...")
+            print(f"Training Autoencoder (Max Epochs={epochs})...")
             for epoch in range(epochs):
-                total_loss = 0
+                self.model.train()
+                train_loss = 0
                 for batch_data, _ in train_loader:
                     batch_data = batch_data.to(self.device)
                     optimizer.zero_grad()
@@ -221,8 +239,28 @@ class AnomalyDetectionPipeline:
                     loss = criterion(output, batch_data)
                     loss.backward()
                     optimizer.step()
-                    total_loss += loss.item()
-                print(f"Epoch {epoch+1}/{epochs} - Loss: {total_loss/len(train_loader):.6f}")
+                    train_loss += loss.item()
+                
+                # Validation
+                self.model.eval()
+                val_loss = 0
+                with torch.no_grad():
+                    for batch_data, _ in val_loader:
+                        batch_data = batch_data.to(self.device)
+                        output = self.model(batch_data)
+                        loss = criterion(output, batch_data)
+                        val_loss += loss.item()
+
+                train_loss /= len(train_loader)
+                val_loss /= len(val_loader)
+                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.6f} | Val Loss: {val_loss:.6f}")
+
+                early_stopping(val_loss, self.model)
+                if early_stopping.early_stop:
+                    print("Early stopping triggered.")
+                    break
+
+            self.model.load_state_dict(torch.load('best_model_checkpoint.pth'))
             
             # Extract Latent Representations
             print("Extracting Latent Representations for OC-SVM...")
@@ -253,9 +291,10 @@ class AnomalyDetectionPipeline:
             train_loader = self._get_dataloader(self.X_train, self.y_train)
 
             self.model.train()
-            print("Training PNN...")
+            print(f"Training PNN (Max Epochs={epochs})...")
             for epoch in range(epochs):
-                total_loss = 0
+                self.model.train()
+                train_loss = 0
                 for batch_x, batch_y in train_loader:
                     batch_x = batch_x.to(self.device)
                     batch_y = batch_y.to(self.device)
@@ -267,9 +306,33 @@ class AnomalyDetectionPipeline:
                     loss = criterion(batch_y, mu, sigma, alpha)
                     loss.backward()
                     optimizer.step()
-                    total_loss += loss.item()
-                print(f"Epoch {epoch+1}/{epochs} - Loss: {total_loss/len(train_loader):.6f}")
-        
+                    train_loss += loss.item()
+                
+                # Validation
+                self.model.eval()
+                val_loss = 0
+                with torch.no_grad():
+                    for batch_x, batch_y in val_loader:
+                        batch_x = batch_x.to(self.device)
+                        batch_y = batch_y.to(self.device)
+
+                        batch_x_flat = batch_x.view(batch_x.size(0), -1)
+
+                        mu, sigma, alpha = self.model(batch_x_flat)
+                        loss = criterion(batch_y, mu, sigma, alpha)
+                        val_loss += loss.item()
+                
+                train_loss /= len(train_loader)
+                val_loss /= len(val_loader)
+                print(f"Epoch {epoch+1}/{epochs} - Train: {train_loss:.6f} | Val: {val_loss:.6f}")
+
+                early_stopping(val_loss, self.model)
+                if early_stopping.early_stop:
+                    print("Early stopping triggered.")
+                    break
+
+            self.model.load_state_dict(torch.load('best_model_checkpoint.pth'))
+
         elif model_type == 'prae':
             print("Initializing Probabilistic Robust Autoencoder (PRAE)...")
 
@@ -292,12 +355,11 @@ class AnomalyDetectionPipeline:
             train_loader = self._get_dataloader(self.X_train, return_indices=True)
 
             self.model.train()
-            print(f"Training PRAE (lambda={lambda_reg:.6f})...")
+            print(f"Training PRAE (lambda={lambda_reg:.6f}, Max Epochs={epochs})...")
 
             for epoch in range(epochs):
+                self.model.train()
                 total_loss_epoch = 0
-                total_rec_loss = 0
-                total_reg_loss = 0
 
                 for batch_x, batch_idx in train_loader:
                     batch_x = batch_x.to(self.device)
@@ -321,10 +383,29 @@ class AnomalyDetectionPipeline:
                     optimizer.step()
 
                     total_loss_epoch += loss.item()
-                    total_rec_loss += loss_reconstruction.item()
-                    total_reg_loss += loss_regularization.item()
+
+                # Validation
+                self.model.eval()
+                val_rec_error = 0
+                with torch.no_grad():
+                    for batch_x, _ in val_loader:
+                        batch_x = batch_x.to(self.device)
+                        reconstructed, _ = self.model(batch_x, training=False)
+                        err = torch.mean((reconstructed - batch_x)**2, dim=[1, 2])
+                        val_rec_error += torch.mean(err).item()
                 
-                print(f"Epoch {epoch+1}/{epochs} - Total Loss: {total_loss_epoch/len(train_loader):.6f} | Rec Loss: {total_rec_loss/len(train_loader):.6f} | Reg Loss: {total_reg_loss/len(train_loader):.6f}")
+                val_metric = val_rec_error / len(val_loader)
+                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {total_loss_epoch/len(train_loader):.6f} | Val MSE: {val_metric:.6f}")
+                
+                early_stopping(val_metric, self.model)
+                if early_stopping.early_stop:
+                    print("Early stopping triggered.")
+                    break
+
+            self.model.load_state_dict(torch.load('best_model_checkpoint.pth'))
+
+        if os.path.exists('best_model_checkpoint.pth'):
+            os.remove('best_model_checkpoint.pth')
 
         return self
 
@@ -500,7 +581,7 @@ class AnomalyDetectionPipeline:
 
         elif self.model_type == 'prae':
             y_eval, scores, preds = self.evaluate_prae(y_true)
-            
+
         else:
             raise ValueError("Model not implemented or unknown model type.")
 
