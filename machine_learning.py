@@ -113,7 +113,7 @@ class ProbabilisticRobustAutoencoder(nn.Module):
         self.num_samples = num_train_samples
         self.sigma = sigma
 
-        self.mu = nn.Parameter(torch.full((num_train_samples,), 2.0))
+        self.mu = nn.Parameter(torch.full((num_train_samples,), 0.9))
 
     def forward(self, x, indices=None, training=True):
         """
