@@ -1,4 +1,6 @@
 import os
+import json
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -721,3 +723,66 @@ class AnomalyDetectionPipeline:
 
         print(f"Found {len(indices)} potential spoofing opportunities.")
         return pd.DataFrame({'Index': indices, 'Expected_Gain': gains})
+
+
+def load_and_evaluate_model(config_path, test_df_features, feature_names):
+    # Load configuration
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+    
+    base_path = config_path.replace('config.json', '')
+    model_type = config['model_type']
+    seq_length = config['seq_length']
+
+    # Initialize pipeline
+    pipeline = AnomalyDetectionPipeline(seq_length=seq_length, feature_names=feature_names)
+    pipeline.model_type = model_type
+
+    # Load scaler and transform data
+    pipeline.scaler = joblib.load(f"{base_path}_scaler.pkl")
+    try:
+        X_test_values = test_df_features[config['feature_names']].values
+    except KeyError:
+        common_feats = [c for c in config['feature_names'] if c in test_df_features.columns]
+        X_test_values = test_df_features[common_feats].values
+    
+    X_test_scaled = pipeline.scaler.transform(X_test_values)
+
+    # Prepare sequences
+    target_col_idx = config['feature_names'].index('log_return') if 'log_return' in config['feature_names'] else -1
+    X_seqs = prep.create_sequences(X_test_scaled, seq_length)
+    pipeline.X_test = X_seqs
+
+    if target_col_idx != -1:
+        y_targets = X_test_scaled[seq_length:, target_col_idx]
+        pipeline.y_test = y_targets[:len(X_seqs)]
+
+    # Initialize model architecture
+    input_dim = config['input_dim']
+    if model_type == 'transformer_ocsvm':
+        pipeline.model = ml.TransformerAutoencoder(num_features=input_dim, model_dim=64, num_heads=4, num_layers=2, representation_dim=128, sequence_length=seq_length)
+        pipeline.detector = joblib.load(f"{base_path}_ocsvm_detector.pkl")
+        pipeline.latent_scaler = joblib.load(f"{base_path}_latent_scaler.pkl")
+    
+    elif model_type == 'prae':
+        base_ae = ml.TransformerAutoencoder(num_features=input_dim, model_dim=64, num_heads=4, num_layers=2, representation_dim=128, sequence_length=seq_length)
+        pipeline.model = ml.ProbabilisticRobustAutoencoder(base_ae, num_train_samples=1)
+
+    elif model_type == 'pnn':
+        pipeline.model = ml.ProbabilisticNN(input_dim=seq_length * input_dim, hidden_dim=64)
+
+    # Load model weights
+    pipeline.model.load_state_dict(torch.load(f"{base_path}_weights.pth"), strict=False)
+    pipeline.model.to(pipeline.device)
+
+    # Evaluate model
+    results, _ = pipeline.evaluate()
+
+    if model_type == 'transformer_ocsvm':
+        y_eval, scores, _ = pipeline.evaluate_transformer_ocsvm()
+    elif model_type == 'prae':
+        y_eval, scores, _ = pipeline.evaluate_prae()
+    elif model_type == 'pnn':
+        y_eval, scores, _ = pipeline.evaluate_pnn()
+    
+    return results, y_eval, scores, config
