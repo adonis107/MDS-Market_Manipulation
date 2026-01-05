@@ -10,10 +10,44 @@ from sklearn.metrics import roc_auc_score, average_precision_score, fbeta_score,
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 
 import preprocessing as prep
 import machine_learning as ml
+
+
+class LazySequenceDataset(Dataset):
+    def __init__(self, data_array, seq_length, targets=None, indices=None):
+        self.data = torch.tensor(data_array, dtype=torch.float32)
+        self.seq_length = seq_length
+        if indices is None: self.indices = np.arange(len(self.data) - self.seq_length)
+        else: self.indices = indices
+
+        self.targets = torch.tensor(targets, dtype=torch.float32) if targets is not None else None
+        self._shape = (len(self.indices), self.seq_length, self.data.shape[1])
+
+    def __len__(self):
+        return self._shape[0]
+
+    def __getitem__(self, idx):
+        start_idx = self.indices[idx]
+        end_idx = start_idx + self.seq_length
+        
+        # Create sequence view
+        x = self.data[start_idx : end_idx]
+        
+        if self.targets is not None:
+            # Target corresponds to the value at the end of the sequence
+            y = self.targets[start_idx]
+            return x, y
+        
+        # Autoencoder: target is input
+        return x, x
+            
+    @property
+    def shape(self):
+        return self._shape
+
 
 class AnomalyDetectionPipeline:
     def __init__(self, seq_length=25, batch_size=64, device=None, random_state=0):
@@ -32,6 +66,13 @@ class AnomalyDetectionPipeline:
         self.detector = None # e.g., OC-SVM
         self.model_type = None
         self.target_col = 'log_return' # For PNN
+
+        # Data containers
+        self.X_train, self.X_val, self.X_test = None, None, None
+        self.y_train, self.y_val, self.y_test = None, None, None
+
+        self.data_scaled = None
+        self.targets_scaled = None
         
         print(f"Pipeline initialized on device: {self.device}")
 
@@ -143,56 +184,58 @@ class AnomalyDetectionPipeline:
         else:
             raise ValueError(f"Unknown scaler method: {method}")
 
-        target_idx = self.feature_names.index(self.target_col)
+        # Convert to float32 for efficiency
+        self.data_scaled = data_scaled.astype(np.float32)
 
-        # Create sequences
-        all_sequences = prep.create_sequences(data_scaled, self.seq_length)
-        self.y_targets = data_scaled[self.seq_length:, target_idx]
-        
-        min_len = min(len(all_sequences), len(self.y_targets))
-        self.X_seqs = all_sequences[:min_len]
-        self.y_targets = self.y_targets[:min_len]
+        # Prepare targets
+        target_idx = self.feature_names.index(self.target_col)
+        full_targets = self.data_scaled[:, target_idx]
+        self.targets_scaled = np.roll(full_targets, -self.seq_length)
+        self.targets_scaled[-self.seq_length:] = 0 # Invalid
 
         # Split into Train/Val/Test
-        n_total = len(self.X_seqs)
+        n_total = len(data_scaled)
         train_end = int(n_total * train_ratio)
         val_end = int(n_total * (train_ratio + val_ratio))
 
-        self.X_train = self.X_seqs[:train_end]
-        self.X_val = self.X_seqs[train_end:val_end]
-        self.X_test = self.X_seqs[val_end:]
+        # Train set
+        self.X_train = LazySequenceDataset(self.data_scaled, self.seq_length, indices=np.arange(0, train_end))
+        self.y_train = LazySequenceDataset(self.data_scaled, self.seq_length, targets=self.targets_scaled, indices=np.arange(0, train_end))
 
-        self.y_train = self.y_targets[:train_end]
-        self.y_val = self.y_targets[train_end:val_end]
-        self.y_test = self.y_targets[val_end:]
+        # Val set
+        self.X_val = LazySequenceDataset(self.data_scaled, self.seq_length, indices=np.arange(train_end, val_end))
+        self.y_val = LazySequenceDataset(self.data_scaled, self.seq_length, targets=self.targets_scaled, indices=np.arange(train_end, val_end))
         
-        print(f"Data split: Train {self.X_train.shape}, Val {self.X_val.shape}, Test {self.X_test.shape}")
+        # Test set
+        self.X_test = LazySequenceDataset(self.data_scaled, self.seq_length, indices=np.arange(val_end, n_total))
+        self.y_test = LazySequenceDataset(self.data_scaled, self.seq_length, targets=self.targets_scaled, indices=np.arange(val_end, n_total))
+
+        print(f"Data split: Train {len(self.X_train)}, Val {len(self.X_val)}, Test {len(self.X_test)}")
         return self
 
-    def _get_dataloader(self, X, y=None, shuffle=True, return_indices=False):
+    def _get_dataloader(self, dataset, shuffle=True, return_indices=False):
         """
         Creates DataLoader.
-
-        Args:
-            X (_type_): input data.
-            y (_type_, optional): target data. Defaults to None.
-            shuffle (bool, optional): If True, shuffles the data. Defaults to True.
-            return_indices (bool, optional): If True, returns (data, index) for PRAE gate updates. Defaults to False.
         """
-        tensor_x = torch.tensor(X, dtype=torch.float32)
-        indices = torch.arange(len(X))
+        if isinstance(dataset, Dataset):
+             if return_indices:
+                 class IndexWrapper(Dataset):
+                     def __init__(self, ds): self.ds = ds
+                     def __len__(self): return len(self.ds)
+                     def __getitem__(self, i): 
+                         data = self.ds[i]
+                         return data[0], i
+                 return DataLoader(IndexWrapper(dataset), batch_size=self.batch_size, shuffle=shuffle)
+             else:
+                 return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
 
-        if y is not None:
-            tensor_y = torch.tensor(y, dtype=torch.float32)
-            dataset = TensorDataset(tensor_x, tensor_y)
+        tensor_x = torch.tensor(dataset, dtype=torch.float32)
+        indices = torch.arange(len(dataset))
 
-        elif return_indices:
-            dataset = TensorDataset(tensor_x, indices)
+        if return_indices: ds = TensorDataset(tensor_x, indices)
+        else: ds = TensorDataset(tensor_x, tensor_x) 
 
-        else:
-            dataset = TensorDataset(tensor_x, tensor_x) # Autoencoder target is input
-
-        return DataLoader(dataset, batch_size=self.batch_size, shuffle=shuffle)
+        return DataLoader(ds, batch_size=self.batch_size, shuffle=shuffle)
 
     def train_model(self, model_type='transformer_ocsvm', epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None, patience=5):
         """
@@ -208,10 +251,9 @@ class AnomalyDetectionPipeline:
         
         early_stopping = ml.EarlyStopping(patience=patience, verbose=True, path='best_model_checkpoint.pth')
 
-        if model_type == 'pnn':
-            val_loader = self._get_dataloader(self.X_val, self.y_val, shuffle=False)
-        else:
-            val_loader = self._get_dataloader(self.X_val, shuffle=False)
+        # Validation DataLoader
+        val_dataset = self.y_val if model_type == 'pnn' else self.X_val
+        val_loader = self._get_dataloader(val_dataset, shuffle=False)
 
         if model_type == 'transformer_ocsvm':
             print("Initializing Transformer Autoencoder...")
@@ -290,7 +332,7 @@ class AnomalyDetectionPipeline:
             criterion = ml.SkewedGaussianNLL()
             optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
-            train_loader = self._get_dataloader(self.X_train, self.y_train)
+            train_loader = self._get_dataloader(self.y_train)
 
             self.model.train()
             print(f"Training PNN (Max Epochs={epochs})...")
@@ -347,9 +389,14 @@ class AnomalyDetectionPipeline:
             # Regularization parameter: lambda
             # Uses mean energy of samples
             if lambda_reg is None:
-                train_tensor = torch.tensor(self.X_train, dtype=torch.float32).view(len(self.X_train), -1)
-                mean_energy = torch.mean(torch.sum(train_tensor**2, dim=1)).item()
-
+                loader_sample = self._get_dataloader(self.X_train, shuffle=False)
+                sq_sum = 0
+                count = 0
+                for i, (bx, _) in enumerate(loader_sample):
+                    if i > 50: break
+                    sq_sum += torch.sum(bx**2).item()
+                    count += bx.numel()
+                mean_energy = sq_sum / count * (num_feat * self.seq_length)
                 lambda_reg = mean_energy / (self.seq_length * num_feat) # normalized by input dim
                 print(f"Auto-tuned lambda (Mean Energy Heuristic): {lambda_reg:.6f}")
 
@@ -411,10 +458,10 @@ class AnomalyDetectionPipeline:
 
         return self
 
-    def _get_latent(self, X):
+    def _get_latent(self, dataset):
         """Helper to get embeddings in batches (for Transformer)."""
 
-        loader = self._get_dataloader(X, shuffle=False)
+        loader = self._get_dataloader(dataset, shuffle=False)
         self.model.eval()
         reps = []
 
@@ -462,9 +509,9 @@ class AnomalyDetectionPipeline:
 
         return y_eval, scores, preds
 
-    def _compute_nll(self, X, y):
+    def _compute_nll(self, dataset):
         """Computes Negative Log-Likelihood for PNN."""
-        loader = self._get_dataloader(X, y, shuffle=False)
+        loader = self._get_dataloader(dataset, shuffle=False)
         self.model.eval()
         nlls = []
 
@@ -497,12 +544,28 @@ class AnomalyDetectionPipeline:
         Args:
             y_true (_type_, optional): _description_. Defaults to None.
         """
-        nll_normal = self._compute_nll(self.X_test, self.y_test)
+        nll_normal = self._compute_nll(self.y_test)
 
-        # Synthetic Anomalies
-        X_test_anom = self.X_test * 5.0
-        nll_anom = self._compute_nll(X_test_anom, self.y_test)
+        loader = self._get_dataloader(self.y_test, shuffle=False)
+        nlls_anom = []
+        with torch.no_grad():
+            for batch_x, batch_y in loader:
+                batch_x = batch_x.to(self.device) * 5.0 # Scale up for anomalies
+                batch_y = batch_y.to(self.device)
+                batch_x_flat = batch_x.view(batch_x.size(0), -1)
 
+                mu, sigma, alpha = self.model(batch_x_flat)
+
+                y_true_batch = batch_y.view_as(mu)
+                z = (y_true_batch - mu) / sigma
+
+                phi = (1.0 / np.sqrt(2 * np.pi)) * torch.exp(-0.5 * z**2)
+                Phi = 0.5 * (1 + torch.erf(alpha * z / np.sqrt(2)))
+                pdf = (2.0 / sigma) * phi * Phi
+                log_pdf = -torch.log(pdf + 1e-9)
+                nlls_anom.append(log_pdf.cpu().numpy().flatten())
+        nll_anom = np.concatenate(nlls_anom)
+        
         if y_true is None:
             scores = np.concatenate([nll_normal, nll_anom])
             y_eval = np.concatenate([np.zeros(len(nll_normal)), np.ones(len(nll_anom))])
@@ -540,11 +603,10 @@ class AnomalyDetectionPipeline:
         scores_test = np.concatenate(rec_errors)
 
         # Synthetic Anomalies if no true labels
-        loader_anom = self._get_dataloader(self.X_test * 5.0, shuffle=False)
         rec_errors_anom = []
         with torch.no_grad():
-            for batch in loader_anom:
-                inputs = batch[0].to(self.device)
+            for batch in loader:
+                inputs = batch[0].to(self.device) * 5.0 # Scale up for anomalies
                 
                 reconstructed, _ = self.model(inputs, training=False)
                 
@@ -605,26 +667,48 @@ class AnomalyDetectionPipeline:
 
         self.model.eval()
         
-        # Use a subset for speed
-        subset_idx = np.random.choice(len(self.X_test), size=min(1000, len(self.X_test)), replace=False)
-        X_subset = self.X_test[subset_idx]
+        target_dataset = self.y_test if self.model_type == 'pnn' else self.X_test
 
-        if self.model_type == 'pnn':
-            y_subset = self.y_test[subset_idx]
+        # Subset random indices
+        all_indices = np.arange(len(target_dataset))
+        subset_idx = np.random.choice(all_indices, size=min(1000, len(all_indices)), replace=False)
+
+        X_subset_list = []
+        y_subset_list = []
+
+        for i in subset_idx:
+            data_tuple = target_dataset[i]
+            x = data_tuple[0]
+            X_subset_list.append(x.numpy())
+            if len(data_tuple) > 1:
+                y_subset_list.append(data_tuple[1].item())
+
+        X_subset = np.stack(X_subset_list)
+        y_subset = np.stack(y_subset_list) if y_subset_list else None
         
         # Baseline score (mean anomaly score of normal data)
         if self.model_type == 'transformer_ocsvm':
-            z_base = self._get_latent(X_subset)
+            X_tensor = torch.tensor(X_subset, dtype=torch.float32).to(self.device)
+            with torch.no_grad():
+                z_base = self.model.get_representation(X_tensor).cpu().numpy()
             z_base = self.latent_scaler.transform(z_base)
             base_scores = -self.detector.score_samples(z_base)
+
         elif self.model_type == 'pnn':
-            base_scores = self._compute_nll(X_subset, y_subset)
+            ds_base = TensorDataset(torch.tensor(X_subset, dtype=torch.float32), torch.tensor(y_subset, dtype=torch.float32))
+            base_scores = self._compute_nll(ds_base)
+        
+        elif self.model_type == 'prae':
+            X_tensor = torch.tensor(X_subset, dtype=torch.float32).to(self.device)
+            with torch.no_grad():
+                reconstructed, _ = self.model(X_tensor, training=False)
+                err = torch.mean((reconstructed - X_tensor)**2, dim=[1, 2])
+                base_scores = err.cpu().numpy()
             
         base_mean = np.mean(base_scores)
         importances = []
-        
         tensor_subset = torch.tensor(X_subset, dtype=torch.float32).to(self.device)
-        
+
         for i, name in enumerate(self.feature_names):
             diffs = []
             for _ in range(n_repeats):
@@ -638,8 +722,16 @@ class AnomalyDetectionPipeline:
                         z_perm = self.model.get_representation(permuted).cpu().numpy()
                     z_perm = self.latent_scaler.transform(z_perm)
                     perm_scores = -self.detector.score_samples(z_perm)
+
                 elif self.model_type == 'pnn':
-                    perm_scores = self._compute_nll(permuted.cpu().numpy(), y_subset)
+                    ds_perm = TensorDataset(permuted, torch.tensor(y_subset))
+                    perm_scores = self._compute_nll(ds_perm)
+
+                elif self.model_type == 'prae':
+                    with torch.no_grad():
+                        reconstructed, _ = self.model(permuted, training=False)
+                        err = torch.mean((reconstructed - permuted)**2, dim=[1, 2])
+                        perm_scores = err.cpu().numpy()
 
                 # Impact: How much did the anomaly score deviate from baseline?
                 # We expect shuffling a key feature to make normal data look anomalous
@@ -677,12 +769,13 @@ class AnomalyDetectionPipeline:
         indices = []
 
         hawkes_indices = [i for i, c in enumerate(self.feature_names) if 'Hawkes_L' in c]
-        spread_idx = self.feature_names.index('spread')
+        spread_idx = self.feature_names.index('spread') if 'spread' in self.feature_names else 0
 
-        X_tensor = torch.tensor(self.X_test, dtype=torch.float32).to(self.device)
+        sample_indices = range(0, len(self.X_test), 10)
 
-        for i in range(0, len(X_tensor), 10):
-            x_orig_seq = X_tensor[i]
+        for i in sample_indices:
+            x_orig_seq, _ = self.X_test[i]
+            x_orig_seq = x_orig_seq.to(self.device)
 
             # Create spoofed sequence
             x_spoof_seq = x_orig_seq.clone()
@@ -730,12 +823,13 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
     with open(config_path, 'r') as f:
         config = json.load(f)
     
-    base_path = config_path.replace('config.json', '')
+    base_path = config_path.replace('_config.json', '')
     model_type = config['model_type']
     seq_length = config['seq_length']
 
     # Initialize pipeline
-    pipeline = AnomalyDetectionPipeline(seq_length=seq_length, feature_names=feature_names)
+    pipeline = AnomalyDetectionPipeline(seq_length=seq_length)
+    pipeline.feature_names = feature_names
     pipeline.model_type = model_type
 
     # Load scaler and transform data
@@ -748,17 +842,25 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
     
     X_test_scaled = pipeline.scaler.transform(X_test_values)
 
-    # Prepare sequences
-    target_col_idx = config['feature_names'].index('log_return') if 'log_return' in config['feature_names'] else -1
-    X_seqs = prep.create_sequences(X_test_scaled, seq_length)
-    pipeline.X_test = X_seqs
 
+    # Prepare sequences
+    X_seqs = prep.create_sequences(X_test_scaled, seq_length)
+    X_tensor = torch.tensor(X_seqs, dtype=torch.float32)
+    pipeline.X_test = TensorDataset(X_tensor, X_tensor)
+
+    target_col_idx = config['feature_names'].index('log_return') if 'log_return' in config['feature_names'] else -1
     if target_col_idx != -1:
         y_targets = X_test_scaled[seq_length:, target_col_idx]
-        pipeline.y_test = y_targets[:len(X_seqs)]
+        y_targets = y_targets[:len(X_seqs)]
+        y_tensor = torch.tensor(y_targets, dtype=torch.float32)
+
+        pipeline.y_test = TensorDataset(X_tensor, y_tensor)
+    else: 
+        pipeline.y_test = None
 
     # Initialize model architecture
     input_dim = config['input_dim']
+
     if model_type == 'transformer_ocsvm':
         pipeline.model = ml.TransformerAutoencoder(num_features=input_dim, model_dim=64, num_heads=4, num_layers=2, representation_dim=128, sequence_length=seq_length)
         pipeline.detector = joblib.load(f"{base_path}_ocsvm_detector.pkl")
@@ -766,14 +868,20 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
     
     elif model_type == 'prae':
         base_ae = ml.TransformerAutoencoder(num_features=input_dim, model_dim=64, num_heads=4, num_layers=2, representation_dim=128, sequence_length=seq_length)
-        pipeline.model = ml.ProbabilisticRobustAutoencoder(base_ae, num_train_samples=1)
+        pipeline.model = ml.ProbabilisticRobustAutoencoder(base_ae, num_train_samples=1) # mu shape = (1,), not needed for inference
 
     elif model_type == 'pnn':
         pipeline.model = ml.ProbabilisticNN(input_dim=seq_length * input_dim, hidden_dim=64)
 
     # Load model weights
-    pipeline.model.load_state_dict(torch.load(f"{base_path}_weights.pth"), strict=False)
     pipeline.model.to(pipeline.device)
+    state_dict = torch.load(f"{base_path}_weights.pth", map_location=pipeline.device)
+
+    if model_type == 'prae':
+        if 'mu' in state_dict:
+            del state_dict['mu']
+
+    pipeline.model.load_state_dict(state_dict, strict=False)
 
     # Evaluate model
     results, _ = pipeline.evaluate()

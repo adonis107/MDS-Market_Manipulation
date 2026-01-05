@@ -4,7 +4,7 @@ import polars as pl
 from scipy.stats import linregress
 import torch
 import torch.nn as nn
-from sklearn.preprocessing import PowerTransformer, StandardScaler, MinMaxScaler
+from sklearn.preprocessing import PowerTransformer, StandardScaler, MinMaxScaler, QuantileTransformer
 from scipy.stats import skewnorm
 
 class data_preprocessor():
@@ -13,9 +13,10 @@ class data_preprocessor():
     Follows Fabre & Challet: Section 2.2.3
     """
     def __init__(self):
-        self.boxcox_transformer = PowerTransformer(method='box-cox', standardize=False)
+        # self.boxcox_transformer = PowerTransformer(method='box-cox', standardize=False)
+        self.boxcox_transformer = QuantileTransformer(output_distribution='normal', random_state=0)
         self.scaler = StandardScaler()
-        self.lambdas = None
+        # self.lambdas = None
         self.min_values = None
 
     def fit(self, X):
@@ -33,7 +34,7 @@ class data_preprocessor():
         X_boxcox = self.boxcox_transformer.transform(X_positive)
 
         self.scaler.fit(X_boxcox)
-        self.lambdas = self.boxcox_transformer.lambdas_
+        # self.lambdas = self.boxcox_transformer.lambdas_
 
         return self
     
