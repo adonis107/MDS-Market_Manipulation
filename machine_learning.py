@@ -1,9 +1,11 @@
 import numpy as np
+import pandas as pd
 import math
 from scipy.stats import skewnorm
 from scipy.special import erf
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
 
 class PositionalEncoding(nn.Module):
@@ -423,3 +425,98 @@ class EarlyStopping:
         
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
+
+
+def compute_permutation_importance(pipeline, X_test, baseline_mse, n_repeats=1):
+    """
+    Compute permutation feature importance.
+    """
+    importances = []
+    X_np = X_test.cpu().numpy()
+
+    for i, feature_name in enumerate(pipeline.feature_names):
+        mse_scores = []
+
+        for _ in range(n_repeats):
+            X_permuted = X_np.copy()
+            np.random.shuffle(X_permuted[:, :, i])
+
+            X_permuted_tensor = torch.tensor(X_permuted, dtype=torch.float32).to(pipeline.device)
+            dataset = TensorDataset(X_permuted_tensor)
+            loader = DataLoader(dataset, batch_size=pipeline.batch_size, shuffle=False)
+
+            mse_values = []
+            with torch.no_grad():
+                for (x_batch,) in loader:
+                    reconstructed, _ = pipeline.model(x_batch)
+                    mse = torch.mean((reconstructed - x_batch)**2, dim=[1, 2])
+                    mse_values.append(mse)
+
+            mse = torch.cat(mse_values).mean().item()
+            mse_scores.append(mse)
+
+        mean_mse = np.mean(mse_scores)
+        importance = mean_mse - baseline_mse
+        importances.append({'Feature': feature_name, 'Importance': importance})
+    
+    return pd.DataFrame(importances).sort_values(by='Importance', ascending=False)
+
+
+def analyze_root_causes(pipeline, anomaly_indices, feature_names):
+    """
+    Identifies features with the highest reconstruction error for anomalies.
+    """
+    print(f"Analyzing {len(anomaly_indices)} anomalies for root causes...")
+    
+    max_idx = len(pipeline.X_test) - 1
+    valid_indices = anomaly_indices[anomaly_indices <= max_idx]
+
+    n_dropped = len(anomaly_indices) - len(valid_indices)
+    if n_dropped > 0:
+        print(f"Dropped {n_dropped} anomaly indices that were out of bounds for the test set.")
+
+    if len(valid_indices) == 0:
+        print("No valid anomaly indices to analyze.")
+        return pd.DataFrame(columns=['Feature', 'Contribution'])
+
+    pipeline.model.eval()
+    
+    anom_seqs = []
+    for idx in valid_indices:
+        seq, _ = pipeline.X_test[idx]
+        anom_seqs.append(seq)
+        
+    X_anom = torch.stack(anom_seqs).to(pipeline.device)
+    
+    # Feature Contribution = Squared Reconstruction Error
+    if pipeline.model_type in ['prae', 'transformer_ocsvm']:
+        with torch.no_grad():
+            if pipeline.model_type == 'prae':
+                reconstructed, _ = pipeline.model(X_anom, training=False)
+            else:
+                reconstructed = pipeline.model(X_anom)
+                
+        # Error per feature
+        feature_errors = torch.mean((X_anom - reconstructed)**2, dim=1).cpu().numpy()
+        
+        mean_feature_contribution = np.mean(feature_errors, axis=0)
+
+    else:
+        # PNN: how far the anomaly is from the global mean
+        X_anom_np = X_anom.cpu().numpy()
+        X_anom_mean_time = np.mean(X_anom_np, axis=1)
+        
+        # Global mean of the test set
+        loader = pipeline._get_dataloader(pipeline.X_test, shuffle=True)
+        batch, _ = next(iter(loader))
+        global_mean = torch.mean(batch, dim=[0, 1]).cpu().numpy()
+        
+        # Contribution = Absolute Deviation
+        mean_feature_contribution = np.mean(np.abs(X_anom_mean_time - global_mean), axis=0)
+
+    contribution_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Contribution': mean_feature_contribution
+    }).sort_values(by='Contribution', ascending=False)
+    
+    return contribution_df

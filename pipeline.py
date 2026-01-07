@@ -3,6 +3,8 @@ import json
 import joblib
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
+import seaborn as sns
 
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import OneClassSVM
@@ -818,7 +820,7 @@ class AnomalyDetectionPipeline:
         return pd.DataFrame({'Index': indices, 'Expected_Gain': gains})
 
 
-def load_and_evaluate_model(config_path, test_df_features, feature_names):
+def load_model(config_path, test_df_features, feature_names):
     # Load configuration
     with open(config_path, 'r') as f:
         config = json.load(f)
@@ -841,7 +843,6 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
         X_test_values = test_df_features[common_feats].values
     
     X_test_scaled = pipeline.scaler.transform(X_test_values)
-
 
     # Prepare sequences
     X_seqs = prep.create_sequences(X_test_scaled, seq_length)
@@ -883,8 +884,14 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
 
     pipeline.model.load_state_dict(state_dict, strict=False)
 
+    return pipeline, config
+
+
+def evaluate_model(pipeline, config):
+    model_type = config['model_type']
+
     # Evaluate model
-    results, _ = pipeline.evaluate()
+    results, cm = pipeline.evaluate()
 
     if model_type == 'transformer_ocsvm':
         y_eval, scores, _ = pipeline.evaluate_transformer_ocsvm()
@@ -893,4 +900,72 @@ def load_and_evaluate_model(config_path, test_df_features, feature_names):
     elif model_type == 'pnn':
         y_eval, scores, _ = pipeline.evaluate_pnn()
     
-    return results, y_eval, scores, config
+    return results, y_eval, scores, cm
+
+
+def plot_lob_snapshot(pipeline, index, levels=10):
+    """Visualizes the Order Book shape at a specific index."""
+    row = pipeline.raw_df.iloc[index]
+    
+    bids = [row[f'bid-volume-{i}'] for i in range(1, levels+1)]
+    asks = [row[f'ask-volume-{i}'] for i in range(1, levels+1)]
+    
+    # Levels (1 to 10)
+    x = np.arange(1, levels+1)
+    
+    plt.figure(figsize=(10, 5))
+    plt.bar(x, bids, color='green', label='Bid Volume (Buy)', alpha=0.7)
+    plt.bar(x, [-a for a in asks], color='red', label='Ask Volume (Sell)', alpha=0.7) # Negative for visual contrast
+    
+    plt.axhline(0, color='black', linewidth=0.8)
+    plt.xlabel("Level (1 = Best Quote)")
+    plt.ylabel("Volume (Shares)")
+    plt.title(f"LOB Snapshot at Index {index}")
+    plt.legend()
+    plt.show()
+
+
+def plot_lob_evolution(pipeline, center_index, offset=10, levels=10):
+    """
+    Plots LOB snapshots before, during, and after a specific index.
+    
+    Args:
+        center_index: The time index of the detected anomaly.
+        offset: Number of time steps to look before/after.
+        levels: Number of price levels to display.
+    """
+    indices = [center_index - offset, center_index, center_index + offset]
+    titles = [f"Before (t={center_index - offset})", 
+              f"Event (t={center_index})", 
+              f"After (t={center_index + offset})"]
+    
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+    x = np.arange(1, levels + 1)
+    
+    for i, idx in enumerate(indices):
+        if 0 <= idx < len(pipeline.raw_df):
+            row = pipeline.raw_df.iloc[idx]
+            
+            # Extract volumes
+            bids = [row[f'bid-volume-{l}'] for l in range(1, levels+1)]
+            asks = [row[f'ask-volume-{l}'] for l in range(1, levels+1)]
+            
+            # Plot Bid vs Ask
+            axes[i].bar(x, bids, color='green', label='Bid Volume' if i==0 else "", alpha=0.7)
+            axes[i].bar(x, [-a for a in asks], color='red', label='Ask Volume' if i==0 else "", alpha=0.7)
+            
+            axes[i].axhline(0, color='black', linewidth=0.8)
+            axes[i].set_title(titles[i])
+            axes[i].set_xlabel("Price Level (1=Best)")
+            axes[i].grid(True, alpha=0.3)
+            
+            if i == 0:
+                axes[i].set_ylabel("Volume (Shares)")
+                axes[i].legend()
+        else:
+            axes[i].text(0.5, 0.5, "Index Out of Bounds", ha='center')
+
+    plt.suptitle(f"Order Book Dynamics Around Potential Spoofing Event", fontsize=14)
+    plt.tight_layout()
+    plt.show()
+
