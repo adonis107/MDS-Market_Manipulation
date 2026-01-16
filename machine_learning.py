@@ -520,3 +520,154 @@ def analyze_root_causes(pipeline, anomaly_indices, feature_names):
     }).sort_values(by='Contribution', ascending=False)
     
     return contribution_df
+
+
+class IntegratedGradients:
+    """
+    Implements Integrated Gradients.
+    Designed to explain anomaly scores in HFT time series.
+    """
+    def __init__(self, model):
+        self.model = model
+        self.model.eval()
+
+    def attribute(self, inputs, baseline=None, target_func=None, n_steps=50):
+        """
+        Computes feature attributions using Integrated Gradients.
+        
+        Args:
+            inputs (torch.Tensor): Input data (Batch, Seq_Len, Features)
+            baseline (torch.Tensor, optional): Baseline reference. Defaults to zeros.
+            target_func (callable): Function that takes the model output and returns a scalar 
+                                    (the anomaly score) to differentiate.
+            n_steps (int): Number of interpolation steps.
+            
+        Returns:
+            attributions (torch.Tensor): Importance scores same shape as inputs.
+        """
+        if inputs.shape[0] != 1:
+            raise ValueError("Current IG implementation supports single-sample explanation (Batch=1).")
+
+        if baseline is None:
+            baseline = torch.zeros_like(inputs)
+
+        # Generate interpolated inputs
+        # Shape: (n_steps, Batch, Seq, Feat)
+        alphas = torch.linspace(0, 1, n_steps + 1).to(inputs.device)
+        
+        # Create scaled inputs
+        scaled_inputs = baseline + alphas[:, None, None, None] * (inputs - baseline)
+        scaled_inputs = scaled_inputs.squeeze(1) 
+        scaled_inputs.requires_grad_(True)
+
+        # Forward pass
+        model_output = self.model(scaled_inputs)
+        
+        # Apply the target function to get the scalar anomaly score
+        score = target_func(model_output, scaled_inputs)
+        
+        # Compute Gradients
+        grads = torch.autograd.grad(torch.sum(score), scaled_inputs)[0]
+        
+        # Integral Approximation
+        # Average gradients across steps
+        avg_grads = torch.mean(grads[:-1] + grads[1:], dim=0) / 2.0
+        
+        # Scale by (Input - Baseline)
+        attributions = (inputs - baseline) * avg_grads.unsqueeze(0)
+        
+        return attributions
+
+
+def prae_anomaly_score_func(model_output, inputs):
+    """
+    Target function for Probabilistic Robust Autoencoder.
+    Returns: Mean Squared Error (Reconstruction Loss) per sample.
+    """
+    reconstructed, _ = model_output
+    
+    # Gradients of the squared error sum
+    loss = torch.sum((reconstructed - inputs) ** 2, dim=[1, 2])
+    return loss
+
+
+def pnn_uncertainty_func(model_output, inputs):
+    """
+    Target function for Probabilistic Neural Network.
+    Returns: Predicted Sigma (Uncertainty) sum.
+    
+    Explains why the model is uncertain/predicting high volatility.
+    """
+    mu, sigma, alpha = model_output
+
+    return sigma.sum()
+
+
+def pnn_nll_func(model_output, inputs, target_y=None):
+    """
+    Target function for PNN Negative Log Likelihood.
+    Requires target_y to explain high loss.
+    """
+    mu, sigma, alpha = model_output
+    
+    criterion = SkewedGaussianNLL()
+    
+    # If target_y is not provided, we can't calculate NLL.
+    if target_y is None:
+        raise ValueError("Target Y required for NLL attribution")
+        
+    return criterion(target_y, mu, sigma, alpha)
+
+
+def explain_occlusion(pipeline, x_seq, feature_names, baseline_mode='mean'):
+    """
+    Performs Feature Ablation (Occlusion) to explain Transformer+OCSVM anomalies.
+    
+    Args:
+        pipeline: The trained AnomalyDetectionPipeline.
+        x_seq (torch.Tensor): The target sequence of shape (1, Seq_Len, Num_Features).
+        feature_names (list): List of feature names.
+        
+    Returns:
+        pd.DataFrame: Feature importance sorted by contribution to the anomaly.
+    """
+    pipeline.model.eval()
+    
+    # Setup Data
+    num_features = len(feature_names)
+
+    if x_seq.dim() == 2:
+        x_seq = x_seq.unsqueeze(0)
+
+    # Determine mask value
+    if baseline_mode == 'mean':
+        baseline_values = x_seq.mean(dim=1, keepdim=True)
+    else:
+        baseline_values = torch.zeros_like(x_seq[:, 0:1, :])
+
+    batch_tensor = x_seq.repeat(num_features + 1, 1, 1).clone()
+
+    # Occlusion
+    for i in range(num_features):
+        # Set the i-th feature to 0 across the entire time sequence
+        batch_tensor[i + 1, :, i] = 0.0
+
+    # Batch Inference
+    with torch.no_grad():
+        scores = pipeline.predict(batch_tensor)
+
+    # Calculate Importance
+    original_score = scores[0]
+    occluded_scores = scores[1:]
+
+    importances = original_score - occluded_scores
+
+    # Format Results
+    importance_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': importances,
+        'Original_Score': original_score,
+        'New_Score': occluded_scores
+    }).sort_values(by='Importance', ascending=False)
+
+    return importance_df

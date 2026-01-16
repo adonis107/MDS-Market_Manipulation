@@ -1,6 +1,7 @@
 import os
 import json
 import joblib
+import math
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -819,6 +820,81 @@ class AnomalyDetectionPipeline:
         print(f"Found {len(indices)} potential spoofing opportunities.")
         return pd.DataFrame({'Index': indices, 'Expected_Gain': gains})
 
+    def predict(self, dataset):
+        """
+        Generates anomaly scores for the input dataset.
+        Higher score = More anomalous.
+        """
+        self.model.eval()
+
+        if isinstance(dataset, torch.Tensor):
+            loader = DataLoader(TensorDataset(dataset), batch_size=self.batch_size, shuffle=False)
+        elif isinstance(dataset, DataLoader):
+            loader = dataset
+        else:
+            loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
+            
+        scores = []
+
+        with torch.no_grad():
+            for batch in loader:
+                # Unpack batch (TensorDataset usually returns a tuple)
+                if isinstance(batch, (list, tuple)):
+                    x = batch[0]
+                else:
+                    x = batch
+
+                x = x.to(self.device)
+                
+                # Transformer + OCSVM
+                if self.model_type == 'transformer_ocsvm':
+                    z = self.model.get_representation(x)
+                    z_np = z.cpu().numpy()
+
+                    # OCSVM decision_function: Positive = Inlier, Negative = Outlier
+                    # We negate it so Higher = More Anomalous
+                    if self.detector is not None:
+                        batch_scores = -self.detector.decision_function(z_np)
+                        scores.append(batch_scores)
+                    else:
+                        raise ValueError("OC-SVM detector not found in the pipeline.")
+
+                # Probabilistic Robust Autoencoder (PRAE)
+                elif self.model_type == 'prae':
+                    # PRAE Score: Reconstruction Error (MSE)
+                    reconstructed, _ = self.model(x, training=False)
+                    
+                    # Calculate MSE per sequence
+                    # Shape: (Batch, Seq, Feat) -> (Batch, )
+                    batch_mse = torch.mean((x - reconstructed) ** 2, dim=[1, 2])
+                    scores.append(batch_mse.cpu().numpy())
+
+                # Probabilistic Neural Network (PNN)
+                elif self.model_type == 'pnn':
+                    # PNN Score: Negative Log Likelihood (NLL)
+                    mu, sigma, alpha = self.model(x)
+                    
+                    y_true = x.view_as(mu) 
+                    
+                    z_score = (y_true - mu) / sigma
+
+                    # Phi (CDF) and phi (PDF) functions
+                    phi = (1.0 / math.sqrt(2 * math.pi)) * torch.exp(-0.5 * z_score**2)
+                    Phi = 0.5 * (1 + torch.erf(alpha * z_score / math.sqrt(2)))
+                    pdf = (2.0 / sigma) * phi * Phi
+
+                    # NLL = -log(pdf)
+                    nll_per_feature = -torch.log(pdf + 1e-10)
+                    
+                    # Mean NLL per sample
+                    batch_nll = torch.mean(nll_per_feature, dim=1) 
+                    if len(batch_nll.shape) > 1:
+                        batch_nll = torch.mean(batch_nll, dim=1)
+                        
+                    scores.append(batch_nll.cpu().numpy())
+
+        return np.concatenate(scores)
+             
 
 def load_model(config_path, test_df_features, feature_names):
     # Load configuration
@@ -969,3 +1045,301 @@ def plot_lob_evolution(pipeline, center_index, offset=10, levels=10):
     plt.tight_layout()
     plt.show()
 
+
+def sequential_training_pipeline(data_dir, num_days=24, first_hour_minutes=60, train_block_minutes=5, 
+                                 val_block_minutes=5, model_type='transformer_ocsvm', 
+                                 feature_sets=['base', 'tao', 'poutre', 'hawkes', 'ofi'],
+                                 epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None, 
+                                 patience=3, seq_length=25, batch_size=64):
+    """
+    Sequential training over multiple days with time-based splits.
+    
+    Args:
+        data_dir: Directory containing daily CSV/Parquet files (named chronologically).
+        num_days: Number of days to train on (default 24).
+        first_hour_minutes: Minutes in first hour to use for train/val (default 60).
+        train_block_minutes: Minutes per training block (default 5).
+        val_block_minutes: Minutes per validation block (default 5).
+        model_type: 'transformer_ocsvm', 'pnn', or 'prae'.
+        feature_sets: List of feature engineering sets to apply.
+        epochs: Max epochs per training block.
+        lr: Learning rate.
+        nu: OC-SVM parameter (for transformer_ocsvm).
+        hidden_dim: Hidden dimension (for PNN).
+        lambda_reg: Regularization parameter (for PRAE).
+        patience: Early stopping patience.
+        seq_length: Sequence length for models.
+        batch_size: Batch size.
+    
+    Returns:
+        dict: Results containing metrics for each day and final evaluation.
+    """
+    
+    # Get sorted list of files
+    files = sorted([f for f in os.listdir(data_dir) if f.endswith(('.csv', '.parquet'))])
+    if len(files) < num_days + 1:
+        raise ValueError(f"Need at least {num_days + 1} files, found {len(files)}")
+    
+    results = {
+        'daily_metrics': [],
+        'final_day_morning_metrics': None,
+        'final_day_rest_metrics': None
+    }
+    
+    # Initialize pipeline
+    pipeline = AnomalyDetectionPipeline(seq_length=seq_length, batch_size=batch_size)
+    
+    print(f"Starting sequential training on {num_days} days...")
+    print(f"Train block: {train_block_minutes} min, Val block: {val_block_minutes} min")
+    print("="*80)
+    
+    # Train on days 1 to num_days
+    for day_idx in range(num_days):
+        day_file = os.path.join(data_dir, files[day_idx])
+        print(f"\n📅 Day {day_idx + 1}/{num_days}: {files[day_idx]}")
+        print("-"*80)
+        
+        # Load data
+        pipeline.load_data(day_file)
+        df = pipeline.raw_df.copy()
+        
+        # Ensure time column exists (assumes 'xltime' or 'timestamp')
+        time_col = 'xltime' if 'xltime' in df.columns else 'timestamp'
+        if time_col not in df.columns:
+            raise ValueError(f"Time column not found. Available columns: {df.columns.tolist()}")
+        
+        df = df.sort_values(time_col).reset_index(drop=True)
+        
+        # Extract first hour
+        start_time = df[time_col].iloc[0]
+        first_hour_mask = df[time_col] < start_time + (first_hour_minutes * 60)
+        df_first_hour = df[first_hour_mask].copy()
+        df_rest_of_day = df[~first_hour_mask].copy()
+        
+        print(f"First hour samples: {len(df_first_hour)}, Rest of day: {len(df_rest_of_day)}")
+        
+        # Split first hour into time blocks
+        block_duration = (train_block_minutes + val_block_minutes) * 60  # seconds
+        num_blocks = int(first_hour_minutes / (train_block_minutes + val_block_minutes))
+        
+        print(f"Training on {num_blocks} time blocks...")
+        
+        for block_idx in range(num_blocks):
+            block_start_time = start_time + (block_idx * block_duration)
+            train_end_time = block_start_time + (train_block_minutes * 60)
+            val_end_time = train_end_time + (val_block_minutes * 60)
+            
+            # Create masks
+            train_mask = (df_first_hour[time_col] >= block_start_time) & \
+                        (df_first_hour[time_col] < train_end_time)
+            val_mask = (df_first_hour[time_col] >= train_end_time) & \
+                      (df_first_hour[time_col] < val_end_time)
+            
+            df_train_block = df_first_hour[train_mask].copy()
+            df_val_block = df_first_hour[val_mask].copy()
+            
+            if len(df_train_block) < seq_length * 2 or len(df_val_block) < seq_length:
+                print(f"Block {block_idx + 1}: Insufficient data, skipping...")
+                continue
+            
+            print(f"Block {block_idx + 1}/{num_blocks}: Train={len(df_train_block)}, Val={len(df_val_block)}")
+            
+            # Feature engineering on train block
+            pipeline.raw_df = df_train_block
+            pipeline.engineer_features(feature_sets)
+            train_features = pipeline.processed_df.copy()
+            
+            # Feature engineering on val block
+            pipeline.raw_df = df_val_block
+            pipeline.engineer_features(feature_sets)
+            val_features = pipeline.processed_df.copy()
+            
+            # Scale data
+            if block_idx == 0 and day_idx == 0:
+                # First block: fit scaler
+                scaler = StandardScaler()
+                train_scaled = scaler.fit_transform(train_features.values)
+                pipeline.scaler = scaler
+            else:
+                # Subsequent blocks: use existing scaler
+                train_scaled = pipeline.scaler.transform(train_features.values)
+            
+            val_scaled = pipeline.scaler.transform(val_features.values)
+            
+            # Create sequences
+            pipeline.data_scaled = train_scaled.astype(np.float32)
+            pipeline.targets_scaled = np.roll(train_scaled[:, pipeline.feature_names.index('log_return')], -seq_length)
+            pipeline.targets_scaled[-seq_length:] = 0
+            
+            pipeline.X_train = LazySequenceDataset(train_scaled, seq_length)
+            pipeline.y_train = LazySequenceDataset(train_scaled, seq_length, targets=pipeline.targets_scaled)
+            
+            pipeline.X_val = LazySequenceDataset(val_scaled, seq_length)
+            val_targets = np.roll(val_scaled[:, pipeline.feature_names.index('log_return')], -seq_length)
+            val_targets[-seq_length:] = 0
+            pipeline.y_val = LazySequenceDataset(val_scaled, seq_length, targets=val_targets)
+            
+            # Train model (accumulate training on first day, then incrementally)
+            if block_idx == 0 and day_idx == 0:
+                print(f"Initializing {model_type} model...")
+                pipeline.train_model(model_type=model_type, epochs=epochs, lr=lr, nu=nu, 
+                                   hidden_dim=hidden_dim, lambda_reg=lambda_reg, patience=patience)
+            else:
+                print(f"Incremental training...")
+                # Incremental training (fewer epochs)
+                pipeline.train_model(model_type=model_type, epochs=max(2, epochs // 2), lr=lr * 0.5, 
+                                   nu=nu, hidden_dim=hidden_dim, lambda_reg=lambda_reg, patience=patience)
+        
+        # Evaluate on rest of day N
+        print(f"\nEvaluating on rest of Day {day_idx + 1}...")
+        
+        if len(df_rest_of_day) > seq_length:
+            pipeline.raw_df = df_rest_of_day
+            pipeline.engineer_features(feature_sets)
+            test_features = pipeline.processed_df.copy()
+            test_scaled = pipeline.scaler.transform(test_features.values)
+            
+            pipeline.X_test = LazySequenceDataset(test_scaled, seq_length)
+            test_targets = np.roll(test_scaled[:, pipeline.feature_names.index('log_return')], -seq_length)
+            test_targets[-seq_length:] = 0
+            pipeline.y_test = LazySequenceDataset(test_scaled, seq_length, targets=test_targets)
+            
+            # Evaluate
+            day_results, cm = pipeline.evaluate()
+            results['daily_metrics'].append({
+                'day': day_idx + 1,
+                'file': files[day_idx],
+                'test_samples': len(pipeline.X_test),
+                **day_results
+            })
+            
+            print(f"Day {day_idx + 1} Results: AUROC={day_results['AUROC']:.4f}, "
+                  f"AUPRC={day_results['AUPRC']:.4f}, F4={day_results['F4_Score']:.4f}")
+        else:
+            print(f"Not enough data in rest of day for evaluation.")
+    
+    # Evaluate on Final Day (split into morning and rest)
+    print(f"\n{'='*80}")
+    print(f"Final Day (Test Day): {files[num_days]}")
+    print("-"*80)
+    
+    final_day_file = os.path.join(data_dir, files[num_days])
+    pipeline.load_data(final_day_file)
+    df_final_day = pipeline.raw_df.copy()
+    df_final_day = df_final_day.sort_values(time_col).reset_index(drop=True)
+    
+    start_time_final_day = df_final_day[time_col].iloc[0]
+    morning_mask = df_final_day[time_col] < start_time_final_day + (first_hour_minutes * 60)
+    
+    df_final_day_morning = df_final_day[morning_mask].copy()
+    df_final_day_rest = df_final_day[~morning_mask].copy()
+    
+    print(f"Morning samples: {len(df_final_day_morning)}, Rest of day: {len(df_final_day_rest)}")
+    
+    # Evaluate on morning of Final Day
+    if len(df_final_day_morning) > seq_length:
+        print("\nEvaluating on Final Day Morning...")
+        pipeline.raw_df = df_final_day_morning
+        pipeline.engineer_features(feature_sets)
+        test_features = pipeline.processed_df.copy()
+        test_scaled = pipeline.scaler.transform(test_features.values)
+        
+        pipeline.X_test = LazySequenceDataset(test_scaled, seq_length)
+        test_targets = np.roll(test_scaled[:, pipeline.feature_names.index('log_return')], -seq_length)
+        test_targets[-seq_length:] = 0
+        pipeline.y_test = LazySequenceDataset(test_scaled, seq_length, targets=test_targets)
+        
+        morning_results, cm_morning = pipeline.evaluate()
+        results['final_day_morning_metrics'] = {
+            'test_samples': len(pipeline.X_test),
+            **morning_results
+        }
+        
+        print(f"Final Day Morning: AUROC={morning_results['AUROC']:.4f}, "
+              f"AUPRC={morning_results['AUPRC']:.4f}, F4={morning_results['F4_Score']:.4f}")
+    
+    # Evaluate on rest of Final Day
+    if len(df_final_day_rest) > seq_length:
+        print("\nEvaluating on Final Day Rest...")
+        pipeline.raw_df = df_final_day_rest
+        pipeline.engineer_features(feature_sets)
+        test_features = pipeline.processed_df.copy()
+        test_scaled = pipeline.scaler.transform(test_features.values)
+        
+        pipeline.X_test = LazySequenceDataset(test_scaled, seq_length)
+        test_targets = np.roll(test_scaled[:, pipeline.feature_names.index('log_return')], -seq_length)
+        test_targets[-seq_length:] = 0
+        pipeline.y_test = LazySequenceDataset(test_scaled, seq_length, targets=test_targets)
+        
+        rest_results, cm_rest = pipeline.evaluate()
+        results['final_day_rest_metrics'] = {
+            'test_samples': len(pipeline.X_test),
+            **rest_results
+        }
+        
+        print(f"Final Day Rest: AUROC={rest_results['AUROC']:.4f}, "
+              f"AUPRC={rest_results['AUPRC']:.4f}, F4={rest_results['F4_Score']:.4f}")
+    
+    print(f"\n{'='*80}")
+    print("Sequential Training Complete!")
+    
+    return results, pipeline
+
+
+def plot_sequential_results(results):
+    """
+    Plots sequential training results across days.
+    
+    Args:
+        results: Dictionary returned by sequential_training_pipeline.
+    """
+    daily_metrics = pd.DataFrame(results['daily_metrics'])
+    
+    if len(daily_metrics) == 0:
+        print("No daily metrics to plot.")
+        return
+    
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+    
+    # AUROC
+    axes[0].plot(daily_metrics['day'], daily_metrics['AUROC'], marker='o', color='blue', label='AUROC')
+    if results['final_day_morning_metrics']:
+        axes[0].axhline(results['final_day_morning_metrics']['AUROC'], color='green', 
+                       linestyle='--', label='Final Day Morning')
+    if results['final_day_rest_metrics']:
+        axes[0].axhline(results['final_day_rest_metrics']['AUROC'], color='red', 
+                       linestyle='--', label='Final Day Rest')
+    axes[0].set_ylabel('AUROC')
+    axes[0].set_title('Sequential Training: AUROC Over Days')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    
+    # AUPRC
+    axes[1].plot(daily_metrics['day'], daily_metrics['AUPRC'], marker='s', color='orange', label='AUPRC')
+    if results['final_day_morning_metrics']:
+        axes[1].axhline(results['final_day_morning_metrics']['AUPRC'], color='green', 
+                       linestyle='--', label='Final Day Morning')
+    if results['final_day_rest_metrics']:
+        axes[1].axhline(results['final_day_rest_metrics']['AUPRC'], color='red', 
+                       linestyle='--', label='Final Day Rest')
+    axes[1].set_ylabel('AUPRC')
+    axes[1].set_title('Sequential Training: AUPRC Over Days')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    
+    # F4 Score
+    axes[2].plot(daily_metrics['day'], daily_metrics['F4_Score'], marker='^', color='purple', label='F4 Score')
+    if results['final_day_morning_metrics']:
+        axes[2].axhline(results['final_day_morning_metrics']['F4_Score'], color='green', 
+                       linestyle='--', label='Final Day Morning')
+    if results['final_day_rest_metrics']:
+        axes[2].axhline(results['final_day_rest_metrics']['F4_Score'], color='red', 
+                       linestyle='--', label='Final Day Rest')
+    axes[2].set_xlabel('Day')
+    axes[2].set_ylabel('F4 Score')
+    axes[2].set_title('Sequential Training: F4 Score Over Days')
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
