@@ -1,3 +1,6 @@
+# VsCode
+.vscode/
+
 # Data
 *.csv.gz
 
@@ -21,4 +24,5 @@ __pycache__/
 *.fls
 *.fdb_latexmk
 *.run.xml
+*/output/
 
