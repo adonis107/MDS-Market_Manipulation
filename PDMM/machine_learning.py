@@ -775,7 +775,7 @@ def analyze_subset(pipeline, loader, dataset_name, model_type, feature_names, de
 
     anomaly_indices = np.where(scores > threshold)[0]
 
-    print(f"{method_name} Threshold: {threshold:.4f}")
+    print(f"{method_name} Threshold: {threshold:.4f}\nDetected {len(anomaly_indices)} anomalies out of {len(scores)} samples ({len(anomaly_indices)/len(scores)*100:.2f}%).")
 
     # Visualize Distribution
     plt.figure(figsize=(12, 4))
