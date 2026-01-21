@@ -4,17 +4,17 @@
       "day": 1,
       "file": "2015-01-02-TOTF.PA-book.csv.gz",
       "test_samples": 563127,
-      "AUROC": 0.9689732841030404,
-      "AUPRC": 0.9761337688152004,
-      "F4_Score": 0.8273565086460049
+      "AUROC": 0.9981864862410669,
+      "AUPRC": 0.9902829257586706,
+      "F4_Score": 0.564918601970238
     },
     {
       "day": 2,
       "file": "2015-01-05-TOTF.PA-book.csv.gz",
       "test_samples": 1087603,
-      "AUROC": 1.0,
-      "AUPRC": 1.0000000000000002,
-      "F4_Score": 1.0
+      "AUROC": 0.9993490079149442,
+      "AUPRC": 0.9990579218075027,
+      "F4_Score": 0.9999241779076163
     },
     {
       "day": 3,
@@ -28,45 +28,29 @@
       "day": 4,
       "file": "2015-01-07-TOTF.PA-book.csv.gz",
       "test_samples": 994694,
-      "AUROC": 1.0,
-      "AUPRC": 1.0000000000000002,
-      "F4_Score": 1.0
+      "AUROC": 0.9982777126977989,
+      "AUPRC": 0.9907960450862681,
+      "F4_Score": 0.9998883020954681
     },
     {
       "day": 5,
       "file": "2015-01-08-TOTF.PA-book.csv.gz",
       "test_samples": 974325,
-      "AUROC": 1.0,
-      "AUPRC": 0.9999999999999999,
-      "F4_Score": 1.0
-    },
-    {
-      "day": 6,
-      "file": "2015-01-09-TOTF.PA-book.csv.gz",
-      "test_samples": 1168876,
-      "AUROC": 1.0,
-      "AUPRC": 0.9999999999999999,
-      "F4_Score": 1.0
-    },
-    {
-      "day": 7,
-      "file": "2015-01-12-TOTF.PA-book.csv.gz",
-      "test_samples": 1078822,
-      "AUROC": 1.0,
-      "AUPRC": 0.9999999999999999,
-      "F4_Score": 1.0
+      "AUROC": 0.9991614006402941,
+      "AUPRC": 0.9983540632299716,
+      "F4_Score": 0.999921278994187
     }
   ],
   "final_day_morning_metrics": {
-    "test_samples": 163332,
+    "test_samples": 107535,
     "AUROC": 1.0,
     "AUPRC": 1.0000000000000002,
-    "F4_Score": 1.0
+    "F4_Score": 0.9994969970175204
   },
   "final_day_rest_metrics": {
-    "test_samples": 1045805,
+    "test_samples": 1168889,
     "AUROC": 1.0,
-    "AUPRC": 1.0,
-    "F4_Score": 1.0
+    "AUPRC": 0.9999999999999999,
+    "F4_Score": 0.9999183806355794
   }
 }
