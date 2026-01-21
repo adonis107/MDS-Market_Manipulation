@@ -174,7 +174,7 @@ def plot_feature_attribution(attributions, feature_names, title="Feature Importa
     return df_attr
 
 
-def plot_global_importance(df_importance, title="Feature Importance", top_k=15):
+def plot_global_importance(df_importance, title="Feature Importance", top_k=15, save_path=None):
     """
     Plots a bar chart of the top features.
     df_importance must have columns: ['Feature', 'Importance']
@@ -186,6 +186,9 @@ def plot_global_importance(df_importance, title="Feature Importance", top_k=15):
     plt.title(title)
     plt.xlabel("Attribution / Impact on Score")
     plt.tight_layout()
+
+    if save_path: plt.savefig(save_path)
+
     plt.show()
 
 
