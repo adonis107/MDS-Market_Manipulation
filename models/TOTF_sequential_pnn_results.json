@@ -1,0 +1,72 @@
+{
+  "daily_metrics": [
+    {
+      "day": 1,
+      "file": "2015-01-02-TOTF.PA-book.csv.gz",
+      "test_samples": 563127,
+      "AUROC": 0.9236314355101218,
+      "AUPRC": 0.862809281706628,
+      "F4_Score": 0.048399553791424896
+    },
+    {
+      "day": 2,
+      "file": "2015-01-05-TOTF.PA-book.csv.gz",
+      "test_samples": 1087603,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 3,
+      "file": "2015-01-06-TOTF.PA-book.csv.gz",
+      "test_samples": 1100402,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 4,
+      "file": "2015-01-07-TOTF.PA-book.csv.gz",
+      "test_samples": 994694,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 5,
+      "file": "2015-01-08-TOTF.PA-book.csv.gz",
+      "test_samples": 974325,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 6,
+      "file": "2015-01-09-TOTF.PA-book.csv.gz",
+      "test_samples": 1168876,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    },
+    {
+      "day": 7,
+      "file": "2015-01-12-TOTF.PA-book.csv.gz",
+      "test_samples": 1078822,
+      "AUROC": 0.5,
+      "AUPRC": 0.5,
+      "F4_Score": 0.0
+    }
+  ],
+  "final_day_morning_metrics": {
+    "test_samples": 163332,
+    "AUROC": 0.5,
+    "AUPRC": 0.5,
+    "F4_Score": 0.0
+  },
+  "final_day_rest_metrics": {
+    "test_samples": 1045805,
+    "AUROC": 0.5,
+    "AUPRC": 0.5,
+    "F4_Score": 0.0
+  }
+}
