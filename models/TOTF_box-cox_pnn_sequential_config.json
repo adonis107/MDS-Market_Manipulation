@@ -3,7 +3,7 @@
   "model_type": "pnn",
   "scaler_type": "box-cox",
   "training_type": "sequential",
-  "num_days": 5,
+  "num_days": 2,
   "seq_length": 25,
   "input_dim": 130,
   "hidden_dim": 64,

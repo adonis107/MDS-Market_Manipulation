@@ -3,9 +3,9 @@
   "model": "transformer_ocsvm",
   "top_n_anomalies": 1000,
   "importance": {
-    "ask": 0.00016819553757164507,
-    "neutral": 2.4125640401405855e-05,
-    "bid": 1.4489371774066839e-05
+    "bid": -7.361767015602405e-05,
+    "ask": -9.32578693735282e-05,
+    "neutral": -6.968622106406786e-05
   },
   "feature_lists": {
     "neutral": [

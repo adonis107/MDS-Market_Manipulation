@@ -3,54 +3,30 @@
     {
       "day": 1,
       "file": "2015-01-02-TOTF.PA-book.csv.gz",
-      "test_samples": 563127,
-      "AUROC": 0.9981864862410669,
-      "AUPRC": 0.9902829257586706,
-      "F4_Score": 0.564918601970238
+      "test_samples": 560127,
+      "AUROC": 0.9975182363427645,
+      "AUPRC": 0.9866688256329724,
+      "F4_Score": 0.002251045510743251
     },
     {
       "day": 2,
       "file": "2015-01-05-TOTF.PA-book.csv.gz",
-      "test_samples": 1087603,
-      "AUROC": 0.9993490079149442,
-      "AUPRC": 0.9990579218075027,
-      "F4_Score": 0.9999241779076163
-    },
-    {
-      "day": 3,
-      "file": "2015-01-06-TOTF.PA-book.csv.gz",
-      "test_samples": 1100402,
-      "AUROC": 1.0,
-      "AUPRC": 0.9999999999999999,
-      "F4_Score": 1.0
-    },
-    {
-      "day": 4,
-      "file": "2015-01-07-TOTF.PA-book.csv.gz",
-      "test_samples": 994694,
-      "AUROC": 0.9982777126977989,
-      "AUPRC": 0.9907960450862681,
-      "F4_Score": 0.9998883020954681
-    },
-    {
-      "day": 5,
-      "file": "2015-01-08-TOTF.PA-book.csv.gz",
-      "test_samples": 974325,
-      "AUROC": 0.9991614006402941,
-      "AUPRC": 0.9983540632299716,
-      "F4_Score": 0.999921278994187
+      "test_samples": 1084603,
+      "AUROC": 0.9983630800584704,
+      "AUPRC": 0.9906059882458269,
+      "F4_Score": 0.0017375415739863558
     }
   ],
   "final_day_morning_metrics": {
-    "test_samples": 107535,
-    "AUROC": 1.0,
-    "AUPRC": 1.0000000000000002,
-    "F4_Score": 0.9994969970175204
-  },
-  "final_day_rest_metrics": {
-    "test_samples": 1168889,
+    "test_samples": 167196,
     "AUROC": 1.0,
     "AUPRC": 0.9999999999999999,
-    "F4_Score": 0.9999183806355794
+    "F4_Score": 1.0
+  },
+  "final_day_rest_metrics": {
+    "test_samples": 1097414,
+    "AUROC": 0.9987442882434848,
+    "AUPRC": 0.9924780149835903,
+    "F4_Score": 0.0013358859041829286
   }
 }

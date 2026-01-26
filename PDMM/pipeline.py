@@ -103,11 +103,16 @@ class AnomalyDetectionPipeline:
         print(f"Successfully loaded {len(self.raw_df)} rows.")
         return self
 
-    def engineer_features(self, feature_sets=['base', 'tao', 'poutre', 'hawkes', 'ofi']):
+    def engineer_features(self, feature_sets=['base', 'tao', 'poutre', 'hawkes', 'ofi'], warmup_steps=3000):
         """
         Applies feature engineering based on selected sets.
         Options: 'base' (Basic LOB), 'tao' (Weighted Imbalance), 
                  'poutre' (Rapidity), 'hawkes' (Memory), 'ofi' (Elasticity)
+        
+        Args:
+            feature_sets (list): List of feature sets to compute.
+            warmup_steps (int): Number of initial rows to discard for EWMA warm-up.
+                                Default is 3000 (3x the max Hawkes half-life of 1000).
         """
         print(f"Engineering features: {feature_sets}...")
 
@@ -130,9 +135,19 @@ class AnomalyDetectionPipeline:
         if 'ofi' in feature_sets:
             features = prep.compute_order_flow_imbalance(df, data=features)
 
-        # Cleanup
+        # Cleanup NaN/Inf values
         features.replace([np.inf, -np.inf], np.nan, inplace=True)
         features = features.fillna(0)
+        
+        # Warm-up trimming: discard initial rows for EWMA stabilization
+        if warmup_steps > 0 and len(features) > warmup_steps:
+            features = features.iloc[warmup_steps:].reset_index(drop=True)
+            # Also trim raw_df to maintain alignment for downstream visualization
+            if self.raw_df is not None and len(self.raw_df) > warmup_steps:
+                self.raw_df = self.raw_df.iloc[warmup_steps:].reset_index(drop=True)
+            print(f"Hawkes warm-up: Dropped first {warmup_steps} rows for EWMA stabilization.")
+        elif warmup_steps > 0 and len(features) <= warmup_steps:
+            print(f"Warning: Data length ({len(features)}) <= warmup_steps ({warmup_steps}). Skipping warm-up trim.")
         
         # Clip extreme outliers
         lower = features.quantile(0.001)
@@ -983,7 +998,7 @@ def sequential_training_pipeline(data_dir, num_days=24, first_hour_minutes=60, t
                                  val_block_minutes=5, model_type='transformer_ocsvm', 
                                  feature_sets=['base', 'tao', 'poutre', 'hawkes', 'ofi'],
                                  epochs=5, lr=1e-3, nu=0.01, hidden_dim=64, lambda_reg=None, 
-                                 patience=3, seq_length=25, batch_size=64):
+                                 patience=3, seq_length=25, batch_size=64, warmup_steps=3000):
     """
     Sequential training over multiple days with time-based splits.
     
@@ -1003,6 +1018,7 @@ def sequential_training_pipeline(data_dir, num_days=24, first_hour_minutes=60, t
         patience: Early stopping patience.
         seq_length: Sequence length for models.
         batch_size: Batch size.
+        warmup_steps: Number of initial rows to discard per block for EWMA warm-up (default 3000).
     
     Returns:
         dict: Results containing metrics for each day and final evaluation.
@@ -1089,11 +1105,17 @@ def sequential_training_pipeline(data_dir, num_days=24, first_hour_minutes=60, t
                 print(f"Block {block_idx + 1}: Insufficient data, skipping...")
                 continue
             
+            # Check if block is large enough for Hawkes warm-up
+            if len(df_train_block) <= warmup_steps:
+                print(f"Block {block_idx + 1}: Block too short for Hawkes warm-up "
+                      f"({len(df_train_block)} rows <= {warmup_steps} warmup_steps). Skipping...")
+                continue
+            
             print(f"Block {block_idx + 1}/{num_blocks}: Train={len(df_train_block)}, Val={len(df_val_block)}")
             
-            # Feature engineering on train block
+            # Feature engineering on train block (with warm-up trimming)
             pipeline.raw_df = df_train_block
-            pipeline.engineer_features(feature_sets)
+            pipeline.engineer_features(feature_sets, warmup_steps=warmup_steps)
 
             if time_col in pipeline.processed_df.columns:
                 pipeline.processed_df = pipeline.processed_df.drop(columns=[time_col])
@@ -1101,9 +1123,9 @@ def sequential_training_pipeline(data_dir, num_days=24, first_hour_minutes=60, t
         
             train_features = pipeline.processed_df.copy()
             
-            # Feature engineering on val block
+            # Feature engineering on val block (with warm-up trimming)
             pipeline.raw_df = df_val_block
-            pipeline.engineer_features(feature_sets)
+            pipeline.engineer_features(feature_sets, warmup_steps=warmup_steps)
 
             if time_col in pipeline.processed_df.columns:
                 pipeline.processed_df = pipeline.processed_df.drop(columns=[time_col])
