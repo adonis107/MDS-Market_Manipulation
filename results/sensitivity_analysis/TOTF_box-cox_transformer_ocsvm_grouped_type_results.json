@@ -1,0 +1,202 @@
+{
+  "group_by": "type",
+  "model": "transformer_ocsvm",
+  "top_n_anomalies": 1000,
+  "importance": {
+    "cancel": 0.0001703145995415085,
+    "ofi": 1.2680679518041415e-05,
+    "lob_price": 2.834457903286669e-05,
+    "time": 2.4639711307354873e-06,
+    "trade": -3.2014795045554045e-06,
+    "hawkes": 3.77085091538023e-05,
+    "mid_price": 3.022072572999468e-06,
+    "slope": -8.072956073132965e-07,
+    "sweep": 3.028655383570111e-07,
+    "return": -3.8026636148158485e-07,
+    "dynamics": 6.703774903810134e-06,
+    "spread": 1.1678613892927014e-06,
+    "imbalance": -4.512790335642336e-09,
+    "depth": -1.2803555422213896e-07,
+    "deep_order": -2.8173941208242682e-08,
+    "sma": 8.752612187179487e-08,
+    "volatility": 1.101061360669231e-06,
+    "speed": 5.475835657977601e-07,
+    "flow": 3.3639402138632144e-06,
+    "lob_volume": -1.057034421354519e-07,
+    "other": -3.7288792078600252e-06
+  },
+  "feature_lists": {
+    "other": [
+      "Unnamed: 1",
+      "bid_volume_delta",
+      "ask_volume_delta",
+      "price_range_50"
+    ],
+    "lob_price": [
+      "bid-price-1",
+      "ask-price-1",
+      "bid-price-2",
+      "ask-price-2",
+      "bid-price-3",
+      "ask-price-3",
+      "bid-price-4",
+      "ask-price-4",
+      "bid-price-5",
+      "ask-price-5",
+      "bid-price-6",
+      "ask-price-6",
+      "bid-price-7",
+      "ask-price-7",
+      "bid-price-8",
+      "ask-price-8",
+      "bid-price-9",
+      "ask-price-9",
+      "bid-price-10",
+      "ask-price-10"
+    ],
+    "lob_volume": [
+      "bid-volume-1",
+      "ask-volume-1",
+      "bid-volume-2",
+      "ask-volume-2",
+      "bid-volume-3",
+      "ask-volume-3",
+      "bid-volume-4",
+      "ask-volume-4",
+      "bid-volume-5",
+      "ask-volume-5",
+      "bid-volume-6",
+      "ask-volume-6",
+      "bid-volume-7",
+      "ask-volume-7",
+      "bid-volume-8",
+      "ask-volume-8",
+      "bid-volume-9",
+      "ask-volume-9",
+      "bid-volume-10",
+      "ask-volume-10"
+    ],
+    "mid_price": [
+      "mid_price",
+      "micro_price_deviation",
+      "mid_price_velocity",
+      "mid_price_acceleration",
+      "mid_price_volatility"
+    ],
+    "spread": [
+      "spread"
+    ],
+    "imbalance": [
+      "L1_Imbalance",
+      "L5_Imbalance",
+      "Weighted_Imbalance_decreasing",
+      "Weighted_Imbalance_increasing",
+      "Weighted_Imbalance_constant"
+    ],
+    "depth": [
+      "bid_depth_ratio",
+      "ask_depth_ratio"
+    ],
+    "return": [
+      "log_return",
+      "bid_log_return",
+      "ask_log_return"
+    ],
+    "flow": [
+      "net_bid_flow",
+      "net_ask_flow"
+    ],
+    "volatility": [
+      "volatility_50",
+      "volatility_100"
+    ],
+    "dynamics": [
+      "abs_velocity"
+    ],
+    "time": [
+      "dt",
+      "log_dt"
+    ],
+    "sweep": [
+      "ask_sweep_cost",
+      "bid_sweep_cost"
+    ],
+    "slope": [
+      "ask_slope",
+      "bid_slope"
+    ],
+    "cancel": [
+      "size_cancel_bid",
+      "size_cancel_ask",
+      "SMA_cancel_bid",
+      "SMA_cancel_ask",
+      "rapidity_cancel_bid",
+      "rapidity_cancel_ask"
+    ],
+    "trade": [
+      "size_trade_bid",
+      "size_trade_ask",
+      "SMA_trade_bid",
+      "SMA_trade_ask",
+      "rapidity_trade_bid",
+      "rapidity_trade_ask"
+    ],
+    "sma": [
+      "SMA_size_bid",
+      "SMA_size_ask"
+    ],
+    "speed": [
+      "bid_price_speed",
+      "ask_price_speed"
+    ],
+    "hawkes": [
+      "Hawkes_L_bid_short",
+      "Hawkes_L_ask_short",
+      "Hawkes_M_bid_short",
+      "Hawkes_M_ask_short",
+      "Hawkes_L_bid_long",
+      "Hawkes_L_ask_long",
+      "Hawkes_L_bid_beta10_Eta0.001",
+      "Hawkes_L_ask_beta10_Eta0.001",
+      "Hawkes_L_bid_beta10_Eta0.1",
+      "Hawkes_L_ask_beta10_Eta0.1",
+      "Hawkes_L_bid_beta10_Eta1.0",
+      "Hawkes_L_ask_beta10_Eta1.0",
+      "Hawkes_L_bid_beta10_Eta10.0",
+      "Hawkes_L_ask_beta10_Eta10.0",
+      "Hawkes_L_bid_beta100_Eta0.001",
+      "Hawkes_L_ask_beta100_Eta0.001",
+      "Hawkes_L_bid_beta100_Eta0.1",
+      "Hawkes_L_ask_beta100_Eta0.1",
+      "Hawkes_L_bid_beta100_Eta1.0",
+      "Hawkes_L_ask_beta100_Eta1.0",
+      "Hawkes_L_bid_beta100_Eta10.0",
+      "Hawkes_L_ask_beta100_Eta10.0",
+      "Hawkes_L_bid_beta1000_Eta0.001",
+      "Hawkes_L_ask_beta1000_Eta0.001",
+      "Hawkes_L_bid_beta1000_Eta0.1",
+      "Hawkes_L_ask_beta1000_Eta0.1",
+      "Hawkes_L_bid_beta1000_Eta1.0",
+      "Hawkes_L_ask_beta1000_Eta1.0",
+      "Hawkes_L_bid_beta1000_Eta10.0",
+      "Hawkes_L_ask_beta1000_Eta10.0",
+      "Hawkes_M_bid_beta10",
+      "Hawkes_M_ask_beta10",
+      "Hawkes_M_bid_beta100",
+      "Hawkes_M_ask_beta100",
+      "Hawkes_M_bid_beta1000",
+      "Hawkes_M_ask_beta1000"
+    ],
+    "deep_order": [
+      "Deep_order_insertion_bid",
+      "Deep_order_insertion_ask"
+    ],
+    "ofi": [
+      "order_flow_imbalance_level_1",
+      "order_flow_imbalance_level_2",
+      "order_flow_imbalance_level_3",
+      "order_flow_imbalance_level_4",
+      "order_flow_imbalance_level_5"
+    ]
+  }
+}
